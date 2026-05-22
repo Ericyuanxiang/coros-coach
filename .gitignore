@@ -1,0 +1,17 @@
+.claude/
+.env
+.env.local
+.playwright-mcp/
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.pyc
+har/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+auth.enc
+*.token

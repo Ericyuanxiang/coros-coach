@@ -1852,10 +1852,10 @@ async def fetch_daily_health(
 # Public training library  (cn.coros.com/training SSR data)
 # ---------------------------------------------------------------------------
 
-PUBLIC_CATALOG_URLS = {
-    "cn": "https://cn.coros.com/training",
-    "us": "https://coros.com/training",
-    "eu": "https://eu.coros.com/training",
+PUBLIC_CATALOG_BASE = {
+    "cn": "https://cn.coros.com",
+    "us": "https://coros.com",
+    "eu": "https://eu.coros.com",
 }
 
 
@@ -1867,7 +1867,8 @@ async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> l
     combinations to collect the full catalog (workouts + training plans).
     Does not require authentication.
     """
-    base_url = PUBLIC_CATALOG_URLS.get(region, PUBLIC_CATALOG_URLS["cn"])
+    api_base = PUBLIC_CATALOG_BASE.get(region, PUBLIC_CATALOG_BASE["cn"])
+    page_url = f"{api_base}/training"
 
     browser_headers = {
         "User-Agent": USER_AGENT,
@@ -1877,7 +1878,7 @@ async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> l
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         # Step 1: fetch SSR page to extract CSRF token and cookies
-        resp = await client.get(base_url, headers=browser_headers)
+        resp = await client.get(page_url, headers=browser_headers)
         resp.raise_for_status()
         html = resp.text
 
@@ -1913,36 +1914,45 @@ async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> l
             "Accept": "application/json",
             "x-csrf-token": csrf,
             "x-country": country or region,
-            "Referer": f"{base_url}/training",
-            "Origin": base_url,
+            "Referer": page_url,
+            "Origin": api_base,
         }
 
-        # Step 2: fetch programs via the catalog API for all category+activity combos
+        # Step 2: paginate through both categories to collect all programs
         all_items: dict[str, dict] = {}
-        categories = ["workout", "plan"]
-        sports = ["run", "trail_run", "cycling", "swimming", "triathlon", "strength", "climbing", "bouldering", ""]
+        page_size = 50
 
-        for cat in categories:
-            for sport in sports:
-                params: dict[str, str] = {"category_type": cat, "locale": locale}
-                if sport:
-                    params["activity_type"] = sport
+        for cat in ("workout", "plan"):
+            offset = 0
+            while True:
+                params = {
+                    "category_type": cat,
+                    "locale": locale,
+                    "offset": str(offset),
+                    "limit": str(page_size),
+                }
                 try:
                     resp2 = await client.get(
-                        f"{base_url}/api/training/get-more-workouts",
+                        f"{api_base}/api/training/get-more-workouts",
                         params=params,
                         headers=api_headers,
                         cookies=cookies,
                     )
-                    if resp2.status_code == 200:
-                        data = resp2.json()
-                        items = data.get("data", {}).get("list", [])
-                        for item in items:
-                            pid = item["_id"]
-                            if pid not in all_items:
-                                all_items[pid] = item
+                    if resp2.status_code != 200:
+                        break
+                    data = resp2.json()
+                    items = data.get("data", {}).get("list", [])
+                    pagination = data.get("data", {}).get("pagination", {})
+                    for item in items:
+                        pid = item["_id"]
+                        if pid not in all_items:
+                            all_items[pid] = item
+                    total = pagination.get("total", 0)
+                    offset += len(items)
+                    if offset >= total or not items:
+                        break
                 except Exception:
-                    pass
+                    break
 
     programs = []
     for w in all_items.values():

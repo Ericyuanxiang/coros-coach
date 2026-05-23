@@ -689,6 +689,41 @@ async def delete_workout(
 
 
 # ---------------------------------------------------------------------------
+# Tool: delete_plan
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def delete_plan(
+    plan_id: str,
+) -> dict:
+    """
+    Delete a training plan from the Coros account.
+
+    Parameters
+    ----------
+    plan_id : str
+        The plan ID to delete (from list_workouts with category="plan",
+        or from list_planned_activities).
+
+    Returns
+    -------
+    dict with keys: deleted, plan_id, message
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        await _run_with_auth(coros_api.delete_plan, auth, plan_id)
+        return {
+            "deleted": True,
+            "plan_id": plan_id,
+            "message": "Plan deleted.",
+        }
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
 # Tool: list_planned_activities
 # ---------------------------------------------------------------------------
 
@@ -1066,7 +1101,13 @@ async def get_user_profile() -> dict:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def get_training_library(region: str = "cn", locale: str = "zh-CN") -> dict:
+async def get_training_library(
+    region: str = "cn",
+    locale: str = "zh-CN",
+    sport_type: str | None = None,
+    difficulty: str | None = None,
+    category: str | None = None,
+) -> dict:
     """Browse the official COROS public training library.
 
     Returns a catalog of training programs (workouts and training plans)
@@ -1093,13 +1134,24 @@ async def get_training_library(region: str = "cn", locale: str = "zh-CN") -> dic
     locale : str
         Language for localized text.  "zh-CN" for Chinese, "en-US" for
         English, "de" for German, etc.  Default: "zh-CN".
+    sport_type : str or None
+        Filter by sport type.  e.g. "run", "cycling", "strength".
+        None (default) returns all sport types.
+    difficulty : str or None
+        Filter by difficulty level.  e.g. "beginner", "intermediate", "advanced".
+        None (default) returns all levels.
+    category : str or None
+        Filter by category.  "workout" for single workouts, "plan" for
+        multi-week training plans.  None (default) returns both.
 
     Returns
     -------
     dict with keys: programs (list of TrainingProgram), count, region, locale
     """
     try:
-        programs = await coros_api.fetch_training_library(region, locale)
+        programs = await coros_api.fetch_training_library(
+            region, locale, sport_type, difficulty, category,
+        )
         return {
             "programs": [p.model_dump() for p in programs],
             "count": len(programs),

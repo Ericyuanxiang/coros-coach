@@ -43,6 +43,7 @@ ENDPOINTS = {
     "workout_list": "/training/program/query",  # POST — list/fetch workout programs
     "workout_add": "/training/program/add",     # POST — create new structured workout
     "workout_delete": "/training/program/delete",  # POST — delete workout(s), body: ["id1", ...]
+    "plan_delete": "/training/plan/delete",       # POST — delete plan(s), body: ["id1", ...]
     "schedule_sum": "/training/schedule/querysum",  # GET — planned calendar aggregates
     "schedule": "/training/schedule/query",         # GET — planned calendar detail
     "schedule_update": "/training/schedule/update", # POST — add workout to calendar
@@ -1105,6 +1106,20 @@ async def delete_workout(auth: StoredAuth, workout_id: str) -> None:
     _check_response(body, "workout delete")
 
 
+async def delete_plan(auth: StoredAuth, plan_id: str) -> None:
+    """Delete a training plan by ID."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["plan_delete"],
+            json=[plan_id],
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "plan delete")
+
+
 # ---------------------------------------------------------------------------
 # Planned activities (training schedule calendar)
 # ---------------------------------------------------------------------------
@@ -1867,13 +1882,32 @@ PUBLIC_CATALOG_BASE = {
 }
 
 
-async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> list[TrainingProgram]:
+async def fetch_training_library(
+    region: str = "cn",
+    locale: str = "zh-CN",
+    sport_type: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    category: Optional[str] = None,
+) -> list[TrainingProgram]:
     """Fetch the public COROS training library catalog.
 
     Fetches the public training page for a CSRF token, then calls the
     /api/training/get-more-workouts endpoint for all category+activity
     combinations to collect the full catalog (workouts + training plans).
     Does not require authentication.
+
+    Filters are applied client-side after fetching the full catalog.
+
+    Parameters
+    ----------
+    sport_type : str or None
+        Filter by sport: "run", "cycling", "strength", "trail_run",
+        "swimming", "bouldering", "climbing".  None = all sports.
+    difficulty : str or None
+        Filter by difficulty: "beginner", "intermediate", "advanced".
+        None = all levels.
+    category : str or None
+        Filter by category: "workout" or "plan".  None = both.
     """
     api_base = PUBLIC_CATALOG_BASE.get(region, PUBLIC_CATALOG_BASE["cn"])
     page_url = f"{api_base}/training"
@@ -1964,14 +1998,14 @@ async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> l
 
     programs = []
     for w in all_items.values():
-        category = w.get("category", "workout")
-        targets = w.get("workout_target" if category == "workout" else "plan_target", [])
+        cat = w.get("category", "workout")
+        targets = w.get("workout_target" if cat == "workout" else "plan_target", [])
         programs.append(TrainingProgram(
             program_id=w.get("_id", ""),
             linked_id=w.get("linked_id"),
             title=w.get("title", w.get("title_i18n_key", "")),
             description=w.get("content"),
-            category=category,
+            category=cat,
             sport_types=w.get("sport_type", []),
             targets=targets,
             difficulties=w.get("difficulty", []),
@@ -1983,6 +2017,13 @@ async def fetch_training_library(region: str = "cn", locale: str = "zh-CN") -> l
             created_at=w.get("createdAt"),
             updated_at=w.get("updatedAt"),
         ))
+
+    if category is not None:
+        programs = [p for p in programs if p.category == category]
+    if sport_type is not None:
+        programs = [p for p in programs if sport_type in p.sport_types]
+    if difficulty is not None:
+        programs = [p for p in programs if difficulty in p.difficulties]
 
     return programs
 

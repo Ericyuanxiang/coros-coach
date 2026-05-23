@@ -293,6 +293,14 @@ def get_stored_auth() -> Optional[StoredAuth]:
 
 def get_env_credentials() -> Optional[tuple[str, str, str]]:
     """Return (email, password, region) from env vars, or None if not fully set."""
+    # Load .env from the project directory if it hasn't been loaded yet.
+    # This makes the function work standalone (scripts, -c commands) without
+    # requiring the caller to load_dotenv() first.
+    env_path = Path(__file__).resolve().parent / ".env"
+    if env_path.exists():
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+
     email = os.environ.get("COROS_EMAIL")
     password = os.environ.get("COROS_PASSWORD")
     region = os.environ.get("COROS_REGION", "eu")

@@ -2,7 +2,7 @@
 
 > **This guide is no longer needed for new setups.**
 > Since the AES encryption key was reverse-engineered from `libencrypt-lib.so` in the
-> Coros APK, `coros-mcp auth` now obtains a mobile API token automatically with no
+> Coros APK, `coros-coach auth` now obtains a mobile API token automatically with no
 > mitmproxy capture required.
 >
 > Follow this guide only if automatic auth fails or you want to import a token manually.
@@ -86,7 +86,7 @@ The token value from the response can be used directly with the Coros mobile API
 If you need to store it for debugging or manual testing, save it from the captured
 response JSON (`data.accessToken`).
 
-> In normal operation you don't need to do anything with this token — `coros-mcp auth`
+> In normal operation you don't need to do anything with this token — `coros-coach auth`
 > handles the full mobile login automatically using the AES encryption scheme described
 > below.
 
@@ -96,7 +96,7 @@ Remove the proxy settings from your Android device's Wi-Fi configuration.
 
 ## Token Lifetime
 
-The mobile token expires after approximately 1 hour. `coros-mcp auth` stores the
+The mobile token expires after approximately 1 hour. `coros-coach auth` stores the
 encrypted login payload alongside the token, and the server replays it automatically
 to refresh — `get_sleep_data` always works without any manual intervention.
 

@@ -1,7 +1,7 @@
 [project]
-name = "coros-mcp"
+name = "coros-coach"
 version = "0.1"
-description = "MCP server for Coros sleep and HRV data"
+description = "AI-powered Coros Training Hub companion — sleep, HRV, training analysis, workout builder, and training plan library"
 requires-python = ">=3.11"
 dependencies = [
     "cryptography",
@@ -18,7 +18,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-coros-mcp = "cli:main"
+coros-coach = "cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]

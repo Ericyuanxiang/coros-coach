@@ -1,5 +1,5 @@
 """
-Coros MCP Server — Sleep, HRV, and training data via the unofficial Coros API.
+Coros Coach MCP Server — AI-powered Coros Training Hub companion.
 
 Usage:
     python server.py
@@ -9,7 +9,7 @@ MCP config (Claude Code):
       -e COROS_EMAIL=you@example.com \\
       -e COROS_PASSWORD=yourpass \\
       -e COROS_REGION=eu \\
-      -- python /path/to/coros-mcp/server.py
+      -- python /path/to/coros-coach/server.py
 
 Alternatively, create a .env file in the project directory with the same
 variables. If COROS_EMAIL and COROS_PASSWORD are set (via env or .env), the
@@ -30,7 +30,7 @@ from coros_api import TOKEN_TTL_MS
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-mcp = FastMCP("coros-mcp")
+mcp = FastMCP("coros-coach")
 
 
 async def _get_auth():

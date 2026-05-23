@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import keyring
 from keyring.errors import KeyringError, NoKeyringError
 
-SERVICE_NAME = "coros-mcp"
+SERVICE_NAME = "coros-coach"
 USERNAME = "access_token"
 
 

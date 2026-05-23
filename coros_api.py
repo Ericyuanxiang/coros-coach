@@ -1643,7 +1643,7 @@ async def _refresh_mobile_token(auth: StoredAuth) -> bool:
     Refresh the mobile API token by replaying the stored login payload.
 
     The stored payload contains AES-encrypted credentials generated during
-    coros-mcp auth.  The server accepts replay of the same encrypted payload
+    coros-coach auth.  The server accepts replay of the same encrypted payload
     — no nonce or anti-replay protection.
 
     Returns True and updates auth.mobile_access_token in-place on success.
@@ -1738,7 +1738,7 @@ async def _fetch_mobile_daily(
     if not await _ensure_mobile_token(auth):
         raise ValueError(
             "No mobile API token available. Set COROS_EMAIL and COROS_PASSWORD in .env "
-            "for automatic acquisition, or run: coros-mcp auth-mobile"
+            "for automatic acquisition, or run: coros-coach auth-mobile"
         )
 
     mobile_base = MOBILE_BASE_URLS.get(auth.region, MOBILE_BASE_URLS["eu"])

@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from auth.keyring_store import CredentialResult
 
-CONFIG_DIR = Path.home() / ".config" / "coros-mcp"
+CONFIG_DIR = Path.home() / ".config" / "coros-coach"
 CREDENTIALS_FILE = CONFIG_DIR / "auth.enc"
 
 
@@ -51,7 +51,7 @@ def _get_machine_id() -> bytes:
 
 
 def _derive_key() -> bytes:
-    salt = b"coros-mcp-v1"
+    salt = b"coros-coach-v1"
     return hashlib.sha256(salt + _get_machine_id()).digest()
 
 

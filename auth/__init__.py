@@ -1,1 +1,1 @@
-"""Coros MCP credential storage."""
+"""Coros Coach credential storage."""

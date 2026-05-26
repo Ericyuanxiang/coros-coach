@@ -27,6 +27,8 @@ claude mcp add coros -- python /path/to/coros-ai-coach/server.py
 ## CLI Commands
 
 ```bash
+coros-ai-coach test           # Verify setup (Python, deps, auth, API connectivity)
+coros-ai-coach serve          # Start MCP server (stdio mode)
 coros-ai-coach auth           # Authenticate (web + mobile tokens)
 coros-ai-coach auth-web       # Web API only (no sleep data)
 coros-ai-coach auth-mobile    # Mobile API only (sleep data)
@@ -46,10 +48,11 @@ The project wraps two separate Coros APIs behind a unified MCP interface:
 Priority chain for retrieval: `COROS_ACCESS_TOKEN` env var → system keyring → encrypted local file. On write, both keyring and encrypted file are updated (belt-and-suspenders). The entire `StoredAuth` object (web token + mobile token + mobile login payload for replay) is serialized as JSON and stored as a single credential.
 
 ### Key Files
-- **`server.py`**: FastMCP tool definitions. Each `@mcp.tool()` function validates auth, delegates to `coros_api`, and returns a dict. This is the only file that imports from `fastmcp`.
-- **`coros_api.py`**: All HTTP logic. Contains two sets of endpoints (Training Hub + mobile), the AES encryption for mobile auth, auto-refresh logic, and response parsers. The `fetch_training_analysis()` function merges two endpoints: `/analyse/dayDetail/query` (long range, no VO2max) + `/analyse/query` (last 84 days, has VO2max/fitness fields).
+- **`server.py`**: FastMCP tool definitions (25 tools). Each `@mcp.tool()` function validates auth, delegates to `coros_api`, and returns a dict. This is the only file that imports from `fastmcp`.
+- **`coros_api.py`**: All HTTP logic. Contains two sets of endpoints (Training Hub + mobile), the AES encryption for mobile auth, auto-refresh logic, and response parsers. The `fetch_coach_briefing()` function orchestrates 6 parallel data fetches for the coaching briefing.
+- **`coach.py`**: Pure analysis engine — no I/O, no HTTP, no randomness. Functions for readiness assessment, fatigue level, training status (CSB model), HRV trend, sleep analysis, training recommendations (13-entry decision matrix), weekly comparison, trends, and alerts. All thresholds as module-level constants.
 - **`models.py`**: Pydantic v2 models: `StoredAuth`, `DailyRecord`, `SleepRecord`/`SleepPhases`, `HRVRecord`, `ActivitySummary`.
-- **`cli.py`**: CLI entry point registered as `coros-ai-coach` script. Delegates to `coros_api.login()` / `login_mobile()`.
+- **`cli.py`**: CLI entry point registered as `coros-ai-coach` script. Commands: `test` (health check), `serve`, `auth`, `auth-status`, `auth-clear`. Delegates to `coros_api`.
 
 ### API Response Pattern
 All Coros API responses return `result: "0000"` on success. Any other value indicates an error — check `message` field. Large time-series fields (`graphList`, `frequencyList`, `gpsLightDuration`) are stripped from activity detail responses to keep them manageable.

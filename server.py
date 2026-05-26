@@ -1223,6 +1223,61 @@ async def import_training_program(linked_id: str, category: str = "workout", reg
 
 
 # ---------------------------------------------------------------------------
+# Tool: get_coach_briefing
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_coach_briefing() -> dict:
+    """
+    Get a complete AI coaching briefing with readiness, fatigue, training
+    status, HRV/sleep trends, personalized recommendation, and alerts.
+
+    Internally fetches and cross-references data from dashboard, training
+    analysis, sleep, daily health, schedule, and user profile.  No need to
+    call separate MCP tools — this single call does all the analysis.
+
+    The briefing applies three evidence-based coaching frameworks:
+    1. Training Stress Balance (CTL/ATL/TSB — Coggan/Friel)
+    2. Coros EvoLab (training_load_ratio_state, tired_rate, stamina_level)
+    3. Sleep-first recovery prioritization (2025 endurance coaching consensus)
+
+    Returns
+    -------
+    dict with keys:
+      overall_status : str
+          "Race Ready" | "Ready to Train" | "Proceed with Caution" |
+          "Recovery Needed" | "Rest Day Recommended"
+      readiness : dict
+          score (Ready/Moderate/Recover/Rest), ratio, contributing_factors
+      fatigue : dict
+          level (Fresh/Normal/Fatigued/Overtrained), fatigue_rate,
+          contributing_factors
+      training_status : dict
+          state, base_fitness (t28d), load_impact (t7d), intensity_trend
+      hrv : dict
+          latest, 7day_avg, baseline, trend, status, deviation_pct
+      sleep : dict
+          avg_duration_hours, quality_score, trend, debt_hours
+      today_recommendation : dict
+          primary, alternative, intensity, duration_minutes, why
+      weekly_summary : dict
+          this_week_load, last_week_load, load_change_pct,
+          total_duration_hours, total_distance_km, sessions_completed
+      trends : dict
+          fitness, fatigue, hrv, sleep
+      alerts : list[str]
+          Warning conditions (empty list if everything is fine)
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await _run_with_auth(coros_api.fetch_coach_briefing, auth)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

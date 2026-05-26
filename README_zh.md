@@ -8,7 +8,7 @@
 
 ## 关于本项目
 
-**coros-ai-coach（高驰AI教练）** 是一个 MCP（Model Context Protocol）服务器，在 AI 助手和 COROS Training Hub 之间架起桥梁。它将 COROS 的非官方 API（即 COROS Web 应用和手机 App 使用的那些接口）封装为 22 个 MCP 工具，任何 AI 助手都能直接调用。
+**coros-ai-coach（高驰AI教练）** 是一个 MCP（Model Context Protocol）服务器，在 AI 助手和 COROS Training Hub 之间架起桥梁。它将 COROS 的非官方 API（即 COROS Web 应用和手机 App 使用的那些接口）封装为 25 个 MCP 工具，任何 AI 助手都能直接调用。
 
 市面上大多数 COROS MCP 服务器只做到基础数据拉取（睡眠、HRV、活动列表）。coros-ai-coach 在此基础上做了大幅扩展：
 
@@ -31,6 +31,8 @@
 - *"显示我最近一个月的训练负荷比——有没有过度训练？"*
 - *"给我建一个核心力量循环：平板支撑、卷腹、抬腿，3 组。"*
 - *"我当前的乳酸阈值心率和配速是多少？"*
+- *"最近练得怎么样？状态能比赛吗？"*
+- *"今天该上强度还是该休息？"*
 
 ## 与原版的区别
 
@@ -106,12 +108,18 @@
 | `delete_workout` | 删除课表。 |
 | `delete_plan` | 删除训练计划。 |
 
+### 智能教练
+
+| 工具 | 说明 |
+|------|------|
+| `get_coach_briefing` | 智能教练简报。一次调用，无需手动编排。内部并行拉取 6 个数据源，运行 10 项专业分析（基于 TrainingPeaks PMC、Coros EvoLab 和 2025 耐力教练共识）。返回准备度评分（0-5）、疲劳水平、训练状态、HRV 趋势、睡眠分析、今日训练建议（含强度/时长/证据链）、周度负荷对比、体能趋势、预警信号（HRV 下降、睡眠债、过度训练风险、长期未训练）。只需问一句"最近练得怎么样？" |
+
 ### 认证
 
 | 工具 | 说明 |
 |------|------|
 | `authenticate_coros` | 邮箱 + 密码登录。同时存储 Web 和手机 Token。 |
-| `authenticate_coros_mobile` | 仅手机端登录（用于睡眠数据）。 |
+| `authenticate_coros_mobile` | 仅手机端登录（睡眠 + 每日健康数据）。 |
 | `check_coros_auth` | Token 有效性状态、过期时间、手机 Token 状态。 |
 
 ## 架构
@@ -162,9 +170,17 @@ COROS_PASSWORD=yourpassword
 COROS_REGION=eu
 ```
 
-即可。服务器首次使用时自动认证。
+有效区域：`eu`、`us`、`cn`。服务器首次使用时自动认证。
 
-### 3. 注册到 Claude Code
+### 3. 验证
+
+```bash
+coros-ai-coach test
+```
+
+一键检查 Python 版本、依赖、认证状态和 API 连通性。
+
+### 4. 注册到 Claude Code
 
 ```bash
 claude mcp add coros -- /path/to/coros-ai-coach/.venv/bin/coros-ai-coach serve
@@ -211,13 +227,26 @@ coros-ai-coach auth-clear    # 清除所有已存储的 Token
 
 ```
 coros-ai-coach/
-├── server.py           # FastMCP 工具定义（22 个工具）
+├── server.py           # FastMCP 工具定义（25 个工具）
 ├── coros_api.py        # HTTP 客户端、双 API 认证、AES 加密、响应解析
+├── coach.py            # 教练分析引擎（准备度、疲劳度、训练状态、训练建议）
 ├── models.py           # Pydantic v2 数据模型
-├── cli.py              # CLI 入口
+├── cli.py              # CLI 入口（serve、auth、test）
 ├── auth/               # Token 存储：钥匙串 + AES-256-GCM 加密文件回退
 └── pyproject.toml
 ```
+
+## 常见问题
+
+| 问题 | 解决方法 |
+|------|----------|
+| **"未认证"** | 运行 `coros-ai-coach test` 验证 `.env` 凭据。如果没有 `.env`，运行 `coros-ai-coach auth` 交互登录。 |
+| **认证失败 / 区域错误** | 检查 `.env` 中的 `COROS_REGION`。必须为 `eu`、`us` 或 `cn`。EU 的 Token 不能用于 US/CN 服务器，反之亦然。 |
+| **手机 API 不可用（无睡眠数据）** | 某些区域可能无法使用手机 API。运行 `coros-ai-coach auth-mobile` 重试。睡眠数据为尽力提供。 |
+| **Token 频繁过期** | Web Token 有效期约 24 小时，会自动刷新。如频繁遇到认证错误，请检查系统时间是否准确。 |
+| **Linux 密钥环错误** | 安装 `dbus-python` 或 `secretstorage`。不可用时服务器会自动回退到 AES-256-GCM 加密本地文件。 |
+| **Claude Code 中找不到工具** | 注册 MCP 服务器后重启 Claude Code。先运行 `coros-ai-coach test` 确认服务器可独立运行。 |
+| **启动时报 ImportError** | 运行 `pip install -e .` 重新安装依赖。用 `python --version` 确认 Python >= 3.11。 |
 
 ## 致谢
 

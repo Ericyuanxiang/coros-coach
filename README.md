@@ -8,7 +8,7 @@ No API key. No official API. Your credentials stay local, encrypted in your syst
 
 ## About
 
-**coros-ai-coach（高驰AI教练）** is an MCP (Model Context Protocol) server that bridges AI assistants with the COROS Training Hub ecosystem. It wraps the unofficial COROS API — the same endpoints used by the COROS web app and mobile app — into 22 MCP tools that any AI assistant can call.
+**coros-ai-coach（高驰AI教练）** is an MCP (Model Context Protocol) server that bridges AI assistants with the COROS Training Hub ecosystem. It wraps the unofficial COROS API — the same endpoints used by the COROS web app and mobile app — into 25 MCP tools that any AI assistant can call.
 
 Most COROS MCP servers stop at basic data retrieval (sleep, HRV, activities). coros-ai-coach goes several steps further:
 
@@ -31,6 +31,8 @@ Ask your assistant questions in plain English (or any language):
 - *"Show me my training load ratio over the last month — am I overtraining?"*
 - *"Build a core strength circuit: plank, crunches, leg raises, 3 sets."*
 - *"What's my lactate threshold heart rate and pace right now?"*
+- *"How's my training lately? Am I ready to race?"*
+- *"Should I train hard today or take it easy?"*
 
 ## How it's different
 
@@ -106,12 +108,18 @@ This is a fork of [cygnusb/coros-mcp](https://github.com/cygnusb/coros-mcp) that
 | `delete_workout` | Remove a workout program. |
 | `delete_plan` | Remove a training plan. |
 
+### Coach briefing
+
+| Tool | What it returns |
+|------|----------------|
+| `get_coach_briefing` | Intelligent coaching briefing. One call, no manual orchestration. Internally fetches 6 data sources in parallel and runs 10 professional analysis functions based on TrainingPeaks PMC, Coros EvoLab, and 2025 endurance coaching consensus. Returns readiness score (0-5), fatigue level, training status, HRV trend, sleep analysis, today's training recommendation with intensity/duration/evidence, weekly load comparison, fitness trends, and alerts (HRV decline, sleep debt, overtraining risk, inactivity). Just ask "How's my training lately?" |
+
 ### Auth
 
 | Tool | What it returns |
 |------|----------------|
 | `authenticate_coros` | Log in with email + password. Stores both web and mobile tokens. |
-| `authenticate_coros_mobile` | Mobile-only login (for sleep data access). |
+| `authenticate_coros_mobile` | Mobile-only login (sleep + daily health data). |
 | `check_coros_auth` | Token validity status, expiry time, mobile token state. |
 
 ## Architecture
@@ -162,9 +170,17 @@ COROS_PASSWORD=yourpassword
 COROS_REGION=eu
 ```
 
-That's it. The server auto-authenticates on first use.
+Valid regions: `eu`, `us`, `cn`. The server auto-authenticates on first use.
 
-### 3. Register with Claude Code
+### 3. Verify
+
+```bash
+coros-ai-coach test
+```
+
+Checks Python version, dependencies, authentication, and API connectivity in one step.
+
+### 4. Register with Claude Code
 
 ```bash
 claude mcp add coros -- /path/to/coros-ai-coach/.venv/bin/coros-ai-coach serve
@@ -211,13 +227,26 @@ coros-ai-coach auth-clear    # Remove all stored tokens
 
 ```
 coros-ai-coach/
-├── server.py           # FastMCP tool definitions (22 tools)
+├── server.py           # FastMCP tool definitions (25 tools)
 ├── coros_api.py        # HTTP client, dual-API auth, AES encryption, response parsers
+├── coach.py            # Coaching analysis engine (readiness, fatigue, training status, recommendations)
 ├── models.py           # Pydantic v2 data models
-├── cli.py              # CLI entry point
+├── cli.py              # CLI entry point (serve, auth, test)
 ├── auth/               # Token storage: keyring + AES-256-GCM encrypted file fallback
 └── pyproject.toml
 ```
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| **"Not authenticated"** | Run `coros-ai-coach test` to verify your `.env` credentials. If `.env` is missing, run `coros-ai-coach auth` for interactive login. |
+| **Auth fails / wrong region** | Check `COROS_REGION` in `.env`. Must be `eu`, `us`, or `cn`. EU tokens don't work on US/CN servers and vice versa. |
+| **Mobile API not available (no sleep data)** | Mobile login may be blocked in some regions. Run `coros-ai-coach auth-mobile` to retry. Sleep data is provided on a best-effort basis. |
+| **Token keeps expiring** | Web tokens last ~24h and refresh automatically. If you see frequent auth errors, check your system clock is accurate. |
+| **Keyring errors on Linux** | Install `dbus-python` or `secretstorage`. If unavailable, the server falls back to an AES-256-GCM encrypted local file. |
+| **Tools don't appear in Claude Code** | Restart Claude Code after registering the MCP server. Run `coros-ai-coach test` first to verify the server works standalone. |
+| **ImportError on startup** | Run `pip install -e .` to reinstall dependencies. Check Python >= 3.11 with `python --version`. |
 
 ## Credits
 

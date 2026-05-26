@@ -2124,3 +2124,54 @@ async def import_training_program(
         "total_exercises": imported.get("exerciseNum") if imported.get("exerciseNum") is not None else len(imported.get("exercises", [])),
         "estimated_time_s": imported.get("estimatedTime"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Coach briefing orchestrator
+# ---------------------------------------------------------------------------
+
+async def _fetch_with_fallback(coro, fallback: any) -> any:
+    try:
+        return await coro
+    except Exception:
+        return fallback
+
+
+async def fetch_coach_briefing(auth: StoredAuth) -> dict:
+    """Fetch all Coros data sources and compose a coaching briefing.
+
+    Internal data sources (each with independent fallback):
+    - fetch_training_analysis (training load, HRV, performance indices, VO2max)
+    - fetch_sleep (sleep stages via mobile API)
+    - fetch_daily_health (steps, calories, stress via mobile API)
+    - fetch_schedule (planned workouts on calendar)
+    - fetch_dashboard (raw dashboard with recovery timer)
+    - fetch_user_profile (zones, baselines, FTP)
+
+    Returns a structured coaching briefing dict with readiness, fatigue,
+    training status, trends, recommendation, and alerts.
+    """
+    from datetime import datetime, timedelta
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(weeks=4)
+    start_day = start_dt.strftime("%Y%m%d")
+    end_day = end_dt.strftime("%Y%m%d")
+
+    analysis = await _fetch_with_fallback(
+        fetch_training_analysis(auth, start_day, end_day), {},
+    )
+    sleep_records = await _fetch_with_fallback(
+        fetch_sleep(auth, start_day, end_day), [],
+    )
+    schedule = await _fetch_with_fallback(
+        fetch_schedule(auth, start_day, end_day), [],
+    )
+    dashboard = await _fetch_with_fallback(fetch_dashboard(auth), {})
+    profile = await _fetch_with_fallback(fetch_user_profile(auth), {})
+
+    daily_records = analysis.get("daily_records", [])
+    sleep_dicts = [r.model_dump() if hasattr(r, "model_dump") else r for r in sleep_records]
+
+    from coach import build_coach_briefing
+    return build_coach_briefing(daily_records, sleep_dicts, schedule, dashboard, profile)

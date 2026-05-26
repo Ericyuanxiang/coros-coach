@@ -2143,10 +2143,10 @@ async def fetch_coach_briefing(auth: StoredAuth) -> dict:
     Internal data sources (each with independent fallback):
     - fetch_training_analysis (training load, HRV, performance indices, VO2max)
     - fetch_sleep (sleep stages via mobile API)
-    - fetch_daily_health (steps, calories, stress via mobile API)
+    - fetch_daily_health (stress, steps, calories via mobile API)
     - fetch_schedule (planned workouts on calendar)
-    - fetch_dashboard (raw dashboard with recovery timer)
-    - fetch_user_profile (zones, baselines, FTP)
+    - fetch_dashboard (recovery timer, EvoLab status)
+    - fetch_user_profile (HR/power zones, baselines, maxHR, RHR)
 
     Returns a structured coaching briefing dict with readiness, fatigue,
     training status, trends, recommendation, and alerts.
@@ -2164,6 +2164,9 @@ async def fetch_coach_briefing(auth: StoredAuth) -> dict:
     sleep_records = await _fetch_with_fallback(
         fetch_sleep(auth, start_day, end_day), [],
     )
+    daily_health = await _fetch_with_fallback(
+        fetch_daily_health(auth, start_day, end_day), [],
+    )
     schedule = await _fetch_with_fallback(
         fetch_schedule(auth, start_day, end_day), [],
     )
@@ -2172,6 +2175,7 @@ async def fetch_coach_briefing(auth: StoredAuth) -> dict:
 
     daily_records = analysis.get("daily_records", [])
     sleep_dicts = [r.model_dump() if hasattr(r, "model_dump") else r for r in sleep_records]
+    health_dicts = [r.model_dump() if hasattr(r, "model_dump") else r for r in daily_health]
 
     from coach import build_coach_briefing
-    return build_coach_briefing(daily_records, sleep_dicts, schedule, dashboard, profile)
+    return build_coach_briefing(daily_records, sleep_dicts, schedule, health_dicts, profile, dashboard)

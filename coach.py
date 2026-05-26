@@ -110,46 +110,74 @@ def _sleep_score(sleep_records: list[dict]) -> tuple[int | None, str]:
     return 0, f"Sleep avg {dur/60:.1f}h (quality {qual}) → Poor (0 pts)"
 
 
-def _rhr_score(daily_records: list[dict]) -> tuple[int | None, str]:
-    """Return (points, reason). -1 to +1 pt, or None if no RHR data."""
+def _rhr_score(daily_records: list[dict], rhr_baseline: int | None = None) -> tuple[int | None, str]:
+    """Return (points, reason). -1 to +1 pt, or None if no RHR data.
+
+    When rhr_baseline (from user profile) is provided, it serves as a more
+    reliable reference than the 7-day rolling average.
+    """
     rhrs = [(r.get("rhr"), r.get("date")) for r in daily_records if r.get("rhr") is not None]
     if not rhrs:
         return None, "No RHR data available → skipped"
 
     latest_rhr = rhrs[0][0]
     week_avg = _avg([h for h, _ in rhrs[1:7]])
-    if week_avg is None:
+
+    # Prefer profile baseline (stable), fall back to week_avg (noisy)
+    baseline = rhr_baseline if rhr_baseline else week_avg
+    baseline_label = "profile baseline" if rhr_baseline else "7d avg"
+    if baseline is None:
         return 0, "Not enough RHR history for baseline → neutral (0 pts)"
 
-    if latest_rhr <= week_avg:
-        return 1, f"RHR {latest_rhr} ≤ 7d avg {week_avg:.0f} → Recovered (+1 pt)"
-    if latest_rhr <= week_avg + RHR_ELEVATED_BPM:
-        return 0, f"RHR {latest_rhr} slightly above 7d avg {week_avg:.0f} → Neutral (0 pts)"
-    return -1, f"RHR {latest_rhr} elevated vs 7d avg {week_avg:.0f} → Elevated (-1 pt)"
+    if latest_rhr <= baseline:
+        return 1, f"RHR {latest_rhr} ≤ {baseline_label} {baseline:.0f} → Recovered (+1 pt)"
+    if latest_rhr <= baseline + RHR_ELEVATED_BPM:
+        return 0, f"RHR {latest_rhr} slightly above {baseline_label} {baseline:.0f} → Neutral (0 pts)"
+    return -1, f"RHR {latest_rhr} elevated vs {baseline_label} {baseline:.0f} → Elevated (-1 pt)"
 
 
 def assess_readiness(
     daily_records: list[dict],
     sleep_records: list[dict],
+    user_profile: dict | None = None,
+    recovery_hours: int | None = None,
 ) -> dict:
-    """Evaluate training readiness from HRV, sleep, and resting HR.
+    """Evaluate training readiness from HRV, sleep, resting HR, and Coros recovery.
 
-    Scoring denominations: HRV 0–2, Sleep 0–2, RHR -1–+1.
-    Readiness = total / max_possible.
+    Scoring denominations: HRV 0-2, Sleep 0-2, RHR -1-+1.
+    Recovery hours (from Coros dashboard) acts as a cap: if still recovering,
+    readiness is capped at Moderate regardless of other signals.
 
     Returns dict with: score (Ready/Moderate/Recover/Rest), contributing_factors.
     """
+    user_profile = user_profile or {}
+    rhr_baseline = user_profile.get("rhr")
     hrv_pts, hrv_reason = _hrv_score(daily_records)
     sleep_pts, sleep_reason = _sleep_score(sleep_records)
-    rhr_pts, rhr_reason = _rhr_score(daily_records)
+    rhr_pts, rhr_reason = _rhr_score(daily_records, rhr_baseline)
 
     max_denominator = (2 if hrv_pts is not None else 0) + (2 if sleep_pts is not None else 0) + (1 if rhr_pts is not None else 0)
     total = (hrv_pts or 0) + (sleep_pts or 0) + (rhr_pts or 0)
 
     if max_denominator == 0:
-        ratio = 0.5  # no data at all → default Moderate
+        ratio = 0.5  # no data at all -> default Moderate
     else:
         ratio = total / max_denominator
+
+    # Recovery hours cap: if Coros says recovery not complete, cap at Moderate
+    recovery_factor = None
+    if recovery_hours is not None:
+        if recovery_hours <= 0:
+            recovery_factor = f"Recovery complete (0h remaining) -> no cap"
+        elif recovery_hours <= 4:
+            recovery_factor = f"Recovery nearly complete ({recovery_hours}h remaining) -> slight cap"
+            ratio = min(ratio, 0.75)
+        elif recovery_hours <= 12:
+            recovery_factor = f"Still recovering ({recovery_hours}h remaining) -> capped at Moderate"
+            ratio = min(ratio, 0.6)
+        else:
+            recovery_factor = f"Recovery needed ({recovery_hours}h remaining) -> capped at Recover"
+            ratio = min(ratio, 0.4)
 
     if ratio >= 0.8:
         score = "Ready"
@@ -160,7 +188,7 @@ def assess_readiness(
     else:
         score = "Rest"
 
-    factors = [r for r in (hrv_reason, sleep_reason, rhr_reason) if r is not None]
+    factors = [r for r in (hrv_reason, sleep_reason, rhr_reason, recovery_factor) if r is not None]
 
     return {"score": score, "ratio": round(ratio, 2), "contributing_factors": factors}
 
@@ -236,26 +264,49 @@ def _hrv_fatigue_signal(daily_records: list[dict]) -> tuple[str, str] | None:
     return "Fatigued", f"HRV {deviation:+.0f}% vs baseline → Fatigued"
 
 
+def _stress_signal(daily_health: list[dict]) -> tuple[str, str] | None:
+    """Fatigue signal from stress data (mobile API). Returns (level, reason) or None."""
+    if not daily_health:
+        return None
+    stresses = [r.get("avg_stress") for r in daily_health[:7]
+                if r.get("avg_stress") is not None]
+    if len(stresses) < 3:
+        return None
+    avg = _avg(stresses)
+    if avg is None:
+        return None
+    if avg < 30:
+        return "Fresh", f"Avg stress {avg:.0f}/100 (low) -> Fresh"
+    if avg < 50:
+        return "Normal", f"Avg stress {avg:.0f}/100 (moderate) -> Normal"
+    return "Fatigued", f"Avg stress {avg:.0f}/100 (high) -> Fatigued"
+
+
 def assess_fatigue(
     daily_records: list[dict],
     sleep_records: list[dict] | None = None,
+    daily_health: list[dict] | None = None,
 ) -> dict:
-    """Fuse three fatigue signals (tired_rate, sleep debt, HRV deviation).
+    """Fuse four fatigue signals (tired_rate, sleep debt, HRV deviation, stress).
 
     Majority vote with overtrained override.
     Returns dict with: level, fatigue_rate, contributing_factors.
     """
     sleep_records = sleep_records or []
+    daily_health = daily_health or []
 
     tr_level, tr_reason = _tired_rate_signal(daily_records)
     sleep_result = _sleep_debt_signal(sleep_records)
     hrv_result = _hrv_fatigue_signal(daily_records)
+    stress_result = _stress_signal(daily_health)
 
     signals: list[tuple[str, str]] = [(tr_level, tr_reason)]
     if sleep_result:
         signals.append(sleep_result)
     if hrv_result:
         signals.append(hrv_result)
+    if stress_result:
+        signals.append(stress_result)
 
     levels = [s[0] for s in signals]
 
@@ -473,16 +524,41 @@ def compute_weekly_comparison(daily_records: list[dict]) -> dict:
 # 7. generate_recommendation
 # ---------------------------------------------------------------------------
 
+def _zone_target(intensity: str, user_profile: dict) -> dict | None:
+    """Build personalized HR zone target from user profile, or None if unavailable."""
+    zone_model = user_profile.get("hr_zone_type", 1) or 1
+    zones = (user_profile.get("zones") or {}).get(zone_model)
+    if not zones:
+        return None
+
+    # Map intensity to zone index (1-indexed, Coros uses 6 zones)
+    zone_map = {"Rest": 0, "Easy": 2, "Moderate": 3, "Hard": 5}
+    zone_idx = zone_map.get(intensity, 2)
+    try:
+        entry = zones[zone_idx - 1]
+    except (IndexError, TypeError):
+        return None
+    low = entry.get("hrLow")
+    high = entry.get("hrHigh")
+    if low and high:
+        return {"zone": zone_idx, "model": {1: "MaxHR", 2: "%HRR", 3: "%LTHR"}.get(zone_model, "MaxHR"),
+                "bpm_low": low, "bpm_high": high}
+    return None
+
+
 def generate_recommendation(
     readiness: dict,
     fatigue: dict,
     training_status: dict,
     schedule: list[dict] | None = None,
+    user_profile: dict | None = None,
 ) -> dict:
     """Generate today's training recommendation from readiness × fatigue × status.
 
-    Returns dict with: primary, alternative, intensity, duration_minutes, why.
+    When user_profile is provided, includes personalized heart rate zone targets.
+    Returns dict with: primary, alternative, intensity, duration_minutes, why, zone_target.
     """
+    user_profile = user_profile or {}
     r_score = readiness.get("score", "Moderate")
     f_level = fatigue.get("level", "Normal")
     t_state = training_status.get("state", "Insufficient Data")
@@ -513,6 +589,9 @@ def generate_recommendation(
     else:
         intensity, dur, primary, why = "Moderate", 50, "Standard training day", "Default recommendation — listen to your body"
 
+    # Personalized zone target from user profile (HR zones)
+    zone_target = _zone_target(intensity, user_profile)
+
     # Alternative: if the user has a scheduled workout today, note it
     alternative = None
     if schedule:
@@ -524,13 +603,16 @@ def generate_recommendation(
                 alternative = f"Today's plan: {alt_name} — adjust based on readiness ({r_score})"
                 break
 
-    return {
+    result = {
         "primary": primary,
         "alternative": alternative,
         "intensity": intensity,
         "duration_minutes": dur,
         "why": why,
     }
+    if zone_target:
+        result["zone_target"] = zone_target
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -666,8 +748,9 @@ def build_coach_briefing(
     daily_records: list[dict],
     sleep_records: list[dict] | None = None,
     schedule: list[dict] | None = None,
-    dashboard: dict | None = None,
+    daily_health: list[dict] | None = None,
     user_profile: dict | None = None,
+    dashboard: dict | None = None,
 ) -> dict:
     """Compose the full coaching briefing from all available Coros data.
 
@@ -676,21 +759,37 @@ def build_coach_briefing(
     """
     sleep_records = sleep_records or []
     schedule = schedule or []
-    dashboard = dashboard or {}
+    daily_health = daily_health or []
     user_profile = user_profile or {}
+    dashboard = dashboard or {}
 
-    readiness = assess_readiness(daily_records, sleep_records)
-    fatigue = assess_fatigue(daily_records, sleep_records)
+    recovery_hours = None
+    summary = dashboard.get("summaryInfo", {})
+    if isinstance(summary, dict):
+        raw = summary.get("fullRecoveryHours")
+        if raw is not None:
+            try:
+                recovery_hours = int(raw)
+            except (TypeError, ValueError):
+                pass
+
+    evo_lab_ready = True
+    sport = dashboard.get("sportDataSummary", {})
+    if isinstance(sport, dict):
+        evo_lab_ready = sport.get("modelValidState", True) is True
+
+    readiness = assess_readiness(daily_records, sleep_records, user_profile, recovery_hours)
+    fatigue = assess_fatigue(daily_records, sleep_records, daily_health)
     training_status = compute_training_status(daily_records)
     hrv = analyze_hrv_trend(daily_records)
     sleep = analyze_sleep_trend(sleep_records)
-    recommendation = generate_recommendation(readiness, fatigue, training_status, schedule)
+    recommendation = generate_recommendation(readiness, fatigue, training_status, schedule, user_profile)
     weekly_summary = compute_weekly_comparison(daily_records)
     trends = compute_trends(training_status, hrv, sleep, daily_records)
     alerts = generate_alerts(daily_records, sleep_records, training_status, hrv, fatigue)
     overall = determine_overall_status(readiness, fatigue, training_status)
 
-    return {
+    result = {
         "overall_status": overall,
         "readiness": readiness,
         "fatigue": fatigue,
@@ -702,3 +801,6 @@ def build_coach_briefing(
         "trends": trends,
         "alerts": alerts,
     }
+    if not evo_lab_ready:
+        result["evo_lab_ready"] = False
+    return result

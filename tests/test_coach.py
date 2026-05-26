@@ -55,6 +55,33 @@ def _make_sleep(date="20260525", total_duration_minutes=450, quality_score=85, *
     return rec
 
 
+def _make_health(date="20260525", avg_stress=25, **kwargs):
+    rec = {"date": date, "avg_stress": avg_stress}
+    rec.update(kwargs)
+    return rec
+
+
+def _make_profile(**kwargs):
+    defaults = {
+        "rhr": 55,
+        "max_hr": 185,
+        "lthr": 172,
+        "hr_zone_type": 1,
+        "zones": {
+            1: [
+                {"hrLow": 0, "hrHigh": 120},
+                {"hrLow": 120, "hrHigh": 145},
+                {"hrLow": 145, "hrHigh": 160},
+                {"hrLow": 160, "hrHigh": 172},
+                {"hrLow": 172, "hrHigh": 185},
+                {"hrLow": 185, "hrHigh": 200},
+            ],
+        },
+    }
+    defaults.update(kwargs)
+    return defaults
+
+
 # ---- Scenario fixtures ----
 
 def healthy_fixtures():
@@ -157,6 +184,27 @@ class TestAssessReadiness:
         result = coach.assess_readiness(daily, [])
         assert 0.0 <= result["ratio"] <= 1.0
 
+    def test_profile_rhr_used_in_readiness(self):
+        daily, sleep = healthy_fixtures()
+        profile = _make_profile(rhr=55)
+        result = coach.assess_readiness(daily, sleep, profile)
+        # Should still produce valid score with profile RHR as baseline
+        assert result["score"] in ("Ready", "Moderate", "Recover")
+        assert any("profile baseline" in f for f in result["contributing_factors"])
+
+    def test_recovery_hours_caps_readiness(self):
+        daily, sleep = healthy_fixtures()
+        # With 16h recovery remaining, even a healthy athlete is capped
+        result = coach.assess_readiness(daily, sleep, recovery_hours=16)
+        assert result["score"] in ("Moderate", "Recover")
+        assert any("recovery" in f.lower() for f in result["contributing_factors"])
+
+    def test_recovery_complete_no_cap(self):
+        daily, sleep = healthy_fixtures()
+        result = coach.assess_readiness(daily, sleep, recovery_hours=0)
+        assert result["score"] in ("Ready", "Moderate")
+        assert any("complete" in f.lower() for f in result["contributing_factors"])
+
 
 # ============================================================================
 # assess_fatigue
@@ -207,6 +255,20 @@ class TestAssessFatigue:
         result = coach.assess_fatigue(daily, sleep)
         # sleep degraded, tired_rate Normal → at least Fatigued
         assert result["level"] in ("Fatigued", "Normal")
+
+    def test_stress_amplifies_fatigue(self):
+        daily = [_make_record("20260525", tired_rate=-20, tired_rate_state_new=2)]
+        health = [_make_health("20260525", 55), _make_health("20260524", 58), _make_health("20260523", 52)]
+        result = coach.assess_fatigue(daily, [], health)
+        # High stress should push toward Fatigued
+        assert "stress" in str(result["contributing_factors"]).lower()
+        assert result["level"] in ("Fatigued", "Normal")
+
+    def test_low_stress_keeps_fresh(self):
+        daily = [_make_record("20260525", tired_rate=-40, tired_rate_state_new=1)]
+        health = [_make_health("20260525", 15), _make_health("20260524", 18), _make_health("20260523", 20)]
+        result = coach.assess_fatigue(daily, [], health)
+        assert result["level"] in ("Fresh", "Normal")
 
 
 # ============================================================================
@@ -412,6 +474,28 @@ class TestGenerateRecommendation:
         # Alternative may or may not match today's date in test, check it doesn't crash
         assert "alternative" in r
 
+    def test_zone_target_from_profile(self):
+        profile = _make_profile()
+        r = coach.generate_recommendation(
+            readiness={"score": "Ready"},
+            fatigue={"level": "Fresh"},
+            training_status={"state": "Optimized"},
+            user_profile=profile,
+        )
+        assert "zone_target" in r
+        zt = r["zone_target"]
+        assert zt["model"] == "MaxHR"
+        assert zt["bpm_low"] > 0
+        assert zt["bpm_high"] > zt["bpm_low"]
+
+    def test_no_zone_target_without_profile(self):
+        r = coach.generate_recommendation(
+            readiness={"score": "Ready"},
+            fatigue={"level": "Fresh"},
+            training_status={"state": "Optimized"},
+        )
+        assert "zone_target" not in r
+
 
 # ============================================================================
 # compute_trends
@@ -567,7 +651,7 @@ class TestBuildCoachBriefing:
         assert sleep == s_copy
 
     def test_empty_all_no_crash(self):
-        result = coach.build_coach_briefing([], [], [], {}, {})
+        result = coach.build_coach_briefing([], [], [], [], {}, {})
         assert "overall_status" in result
 
 

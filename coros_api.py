@@ -39,16 +39,38 @@ ENDPOINTS = {
     "sleep": "/coros/data/statistic/daily",  # mobile API (apieu.coros.com)
     "activity_list": "/activity/query",
     "activity_detail": "/activity/detail/query",
+    "activity_download": "/activity/detail/download",
     "sport_types": "/activity/fit/getImportSportList",
     "workout_list": "/training/program/query",  # POST — list/fetch workout programs
     "workout_add": "/training/program/add",     # POST — create new structured workout
     "workout_delete": "/training/program/delete",  # POST — delete workout(s), body: ["id1", ...]
+    "workout_detail": "/training/program/detail",  # GET  — single workout detail
+    "workout_update": "/training/program/update",  # POST — update workout (send full JSON)
+    "workout_calculate": "/training/program/calculate",  # POST — estimate training metrics
+    "workout_copy": "/training/program/copy",         # POST — copy workout (used by import)
+    "plan_query": "/training/plan/query",         # POST — list user's training plans
+    "plan_add": "/training/plan/add",             # POST — create new training plan
+    "plan_update": "/training/plan/update",       # POST — update training plan
+    "plan_detail": "/training/plan/detail",       # GET  — single plan detail (used by import)
+    "plan_copy": "/training/plan/copy",           # POST — copy plan (used by import)
     "plan_delete": "/training/plan/delete",       # POST — delete plan(s), body: ["id1", ...]
     "schedule_sum": "/training/schedule/querysum",  # GET — planned calendar aggregates
     "schedule": "/training/schedule/query",         # GET — planned calendar detail
     "schedule_update": "/training/schedule/update", # POST — add workout to calendar
     "exercises": "/training/exercise/query",        # GET — exercise catalogue by sport type
     "account_query": "/account/query",             # GET — user profile, HR zones, maxHr, rhr
+    "dashboard_detail": "/dashboard/detail/query",  # GET — enriched dashboard (7d + targets)
+    "activity_update": "/activity/update",          # POST — update an activity
+    "activity_delete": "/activity/delete",           # POST — delete an activity
+    "activity_team_query": "/activity/team/query",   # GET  — team activity feed
+    "activity_fit_import": "/activity/fit/import",   # POST — upload FIT file (multipart)
+    "activity_fit_delete": "/activity/fit/deleteSportImport",  # POST — delete FIT import
+    "team_list": "/team/user/teamlist",              # GET — list user's teams
+    "team_info": "/team/info",                       # GET — single team detail
+    "team_dashboard": "/dashboard/team/query",       # GET — team dashboard (scores + zones)
+    "team_dashboard_detail": "/dashboard/detail/team/query",  # GET — team dashboard detail
+    "account_logout": "/account/logout",             # POST — logout
+    "account_update": "/account/update",             # POST — update account profile
 }
 
 # Login works on teamapi.coros.com but tokens are only valid on the
@@ -368,6 +390,145 @@ async def fetch_dashboard(auth: StoredAuth) -> dict:
     return body.get("data", {})
 
 
+async def fetch_dashboard_detail(auth: StoredAuth) -> dict:
+    """Fetch the enriched Coros dashboard with 7-day detail and planned targets.
+
+    GET /dashboard/detail/query
+
+    Returns a richer dataset than /dashboard/query, including:
+    - summaryInfo: ATI, CTI, tiredRate, trainingLoadRatio
+    - detailList: 7 days of daily metrics
+    - sportDataList: recent activities with avgHR, avgPace, distance
+    - targetList: upcoming scheduled workouts
+    - currentWeekRecord / record: distance/duration/tl records
+
+    Returns
+    -------
+    dict with keys: summaryInfo, detailList, sportDataList, targetList,
+    currentWeekRecord, record.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["dashboard_detail"],
+            params={"userId": auth.user_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "dashboard detail")
+    return body.get("data", {})
+
+
+async def fetch_team_list(auth: StoredAuth) -> list[dict]:
+    """List all teams the current user belongs to.
+
+    GET /team/user/teamlist
+
+    Returns a list of team objects with teamId, name, role (1=creator),
+    totalMember, invitationCode, and avatar.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["team_list"],
+            params={"userId": auth.user_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "team list")
+    return body.get("data", {}).get("teamList", [])
+
+
+async def _get_primary_team_id(auth: StoredAuth) -> str:
+    """Return the teamId for the user's first team (creator-owned preferred)."""
+    teams = await fetch_team_list(auth)
+    if not teams:
+        return ""
+    owned = [t for t in teams if t.get("creator") == auth.user_id]
+    target = owned[0] if owned else teams[0]
+    return target.get("teamId", "")
+
+
+async def fetch_team_info(auth: StoredAuth, team_id: str = "") -> dict:
+    """Fetch single team detail (GET /team/info)."""
+    if not team_id:
+        team_id = await _get_primary_team_id(auth)
+    if not team_id:
+        return {"error": "No team found"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["team_info"],
+            params={"teamId": team_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "team info")
+    return body.get("data", body)
+
+
+async def fetch_team_dashboard(auth: StoredAuth, team_id: str = "") -> dict:
+    """Fetch team dashboard snapshot with performance scores and zones.
+
+    GET /dashboard/team/query
+
+    Returns summaryInfo containing:
+    - aerobicEnduranceScore, anaerobicCapacityScore, anaerobicEnduranceScore,
+      lactateThresholdCapacityScore (0-100 scales)
+    - lthr / lthrZone: lactate threshold HR and 6-zone breakdown
+    - ltsp / ltspZone: lactate threshold pace and pace zone breakdown
+    - fitnessMaxHr, cycleLevelHr, fullRecoveryHours
+
+    Also returns sportDataSummary (activity count, model state).
+    """
+    if not team_id:
+        team_id = await _get_primary_team_id(auth)
+    if not team_id:
+        return {"error": "No team found"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["team_dashboard"],
+            params={"teamId": team_id, "userId": auth.user_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "team dashboard")
+    return body.get("data", {})
+
+
+async def fetch_team_dashboard_detail(auth: StoredAuth, team_id: str = "") -> dict:
+    """Fetch enriched team dashboard with 7-day detail and planned targets.
+
+    GET /dashboard/detail/team/query
+
+    Same structure as fetch_dashboard_detail but scoped to a team:
+    summaryInfo, detailList, sportDataList, targetList,
+    currentWeekRecord, record.
+    """
+    if not team_id:
+        team_id = await _get_primary_team_id(auth)
+    if not team_id:
+        return {"error": "No team found"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["team_dashboard_detail"],
+            params={"teamId": team_id, "userId": auth.user_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "team dashboard detail")
+    return body.get("data", {})
+
+
 # ---------------------------------------------------------------------------
 # Daily analysis data  (/analyse/dayDetail/query — up to 24 weeks)
 # ---------------------------------------------------------------------------
@@ -513,7 +674,7 @@ async def fetch_training_analysis(
                         if t7_val is not None:
                             setattr(rec, field_name, t7_val)
 
-    daily = sorted(records_by_date.values(), key=lambda r: r.date)
+    daily = sorted(records_by_date.values(), key=lambda r: r.date, reverse=True)
 
     return {
         "daily_records": [r.model_dump() for r in daily],
@@ -553,6 +714,35 @@ async def fetch_sport_types(auth: StoredAuth) -> list[dict]:
 
     _check_response(body, "sport types")
     return body.get("data", []) or []
+
+
+async def fetch_fit_import(auth: StoredAuth, file_path: str) -> dict:
+    """Import a FIT file (POST /activity/fit/import — multipart upload)."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        with open(file_path, "rb") as fh:
+            resp = await client.post(
+                _base_url(auth.region) + ENDPOINTS["activity_fit_import"],
+                files={"file": (os.path.basename(file_path), fh, "application/octet-stream")},
+                headers={k: v for k, v in _auth_headers(auth).items() if k != "Content-Type"},
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    _check_response(body, "FIT import")
+    return body.get("data", body)
+
+
+async def fetch_fit_delete(auth: StoredAuth, import_id: str) -> dict:
+    """Delete an imported FIT session (POST /activity/fit/deleteSportImport)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["activity_fit_delete"],
+            json={"id": import_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "FIT delete")
+    return body.get("data", body)
 
 
 # ---------------------------------------------------------------------------
@@ -650,9 +840,130 @@ async def fetch_activity_detail(auth: StoredAuth, activity_id: str, sport_type: 
     return data
 
 
-# ---------------------------------------------------------------------------
-# Workout programs  (/training/program/query + /training/program/add)
-# ---------------------------------------------------------------------------
+# File type mapping for activity download
+_EXPORT_FILE_TYPES: dict[int, str] = {
+    0: "csv",
+    1: "gpx",
+    2: "kml",
+    3: "tcx",
+    4: "fit",
+}
+
+
+async def fetch_activity_download(
+    auth: StoredAuth,
+    activity_id: str,
+    sport_type: int,
+    file_type: int = 4,
+    output_dir: str = "",
+) -> dict:
+    """Download an activity file (FIT/GPX/TCX/KML/CSV) to local disk.
+
+    Returns {"filePath": "...", "fileType": "fit", "sizeBytes": ...}.
+    If output_dir is empty, saves to the system temp directory.
+    """
+    headers = {k: v for k, v in _auth_headers(auth).items() if k != "Content-Type"}
+    url = _base_url(auth.region) + ENDPOINTS["activity_download"]
+    form_data = {
+        "labelId": activity_id,
+        "userId": auth.user_id,
+        "sportType": str(sport_type),
+        "fileType": str(file_type),
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, data=form_data, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "activity download")
+    file_url = body["data"]["fileUrl"]
+    fmt = _EXPORT_FILE_TYPES.get(file_type, str(file_type))
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        file_resp = await client.get(file_url)
+        file_resp.raise_for_status()
+
+    import tempfile
+    dest = output_dir or tempfile.gettempdir()
+    filename = f"{activity_id}.{fmt}"
+    filepath = os.path.join(dest, filename)
+    with open(filepath, "wb") as f:
+        f.write(file_resp.content)
+
+    return {
+        "filePath": filepath,
+        "fileType": fmt,
+        "sizeBytes": len(file_resp.content),
+    }
+
+
+async def fetch_update_activity(
+    auth: StoredAuth,
+    activity_id: str,
+    updates: dict,
+) -> dict:
+    """Update an activity's metadata (POST /activity/update).
+
+    Parameters
+    ----------
+    activity_id : str
+        The activity labelId.
+    updates : dict
+        Fields to update, e.g. {"name": "Morning Run", "note": "Easy pace"}.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["activity_update"],
+            json={"labelId": activity_id, **updates},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "update activity")
+    return body.get("data", body)
+
+
+async def fetch_delete_activity(auth: StoredAuth, activity_id: str) -> dict:
+    """Delete an activity (POST /activity/delete)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["activity_delete"],
+            json={"labelId": activity_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "delete activity")
+    return body.get("data", body)
+
+
+async def fetch_activity_team_query(
+    auth: StoredAuth,
+    team_id: str = "",
+    start_day: str = "",
+    end_day: str = "",
+    size: int = 20,
+) -> list[dict]:
+    """Fetch team activity feed (GET /activity/team/query)."""
+    params = {"size": str(size)}
+    if team_id:
+        params["teamId"] = team_id
+    if start_day:
+        params["startDay"] = start_day
+    if end_day:
+        params["endDay"] = end_day
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["activity_team_query"],
+            params=params,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "team activity query")
+    return [_parse_activity(item) for item in body.get("data", {}).get("list", [])]
 
 # sportType=2 = Indoor Cycling (Rollen); intensityType=6 = power in watts
 # targetType=2 = time-based (seconds); exerciseType=2 = cycling block
@@ -1120,6 +1431,54 @@ async def delete_plan(auth: StoredAuth, plan_id: str) -> None:
     _check_response(body, "plan delete")
 
 
+async def fetch_plans(auth: StoredAuth) -> list[dict]:
+    """List all user training plans (POST /training/plan/query)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["plan_query"],
+            json={},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "plan list")
+    return body.get("data", [])
+
+
+async def create_plan(auth: StoredAuth, plan_data: dict) -> dict:
+    """Create a new training plan (POST /training/plan/add).
+
+    Parameters
+    ----------
+    plan_data : dict
+        Full plan JSON with exercises, metadata, etc.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["plan_add"],
+            json=plan_data,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "plan create")
+    return body.get("data", body)
+
+
+async def update_plan(auth: StoredAuth, plan_data: dict) -> dict:
+    """Update an existing training plan (POST /training/plan/update)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["plan_update"],
+            json=plan_data,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "plan update")
+    return body.get("data", body)
+
+
 # ---------------------------------------------------------------------------
 # Planned activities (training schedule calendar)
 # ---------------------------------------------------------------------------
@@ -1398,6 +1757,83 @@ async def _fetch_raw_workout(auth: StoredAuth, workout_id: str) -> Optional[dict
     return None
 
 
+async def fetch_program_calculate(auth: StoredAuth, workout_data: dict) -> dict:
+    """Estimate training metrics for a workout program structure.
+
+    POST /training/program/calculate with the full workout JSON body.
+    Returns estimated planDuration (seconds), planDistance (cm),
+    planTrainingLoad, planSets, and an exerciseBarChart for visualization.
+
+    Parameters
+    ----------
+    auth : StoredAuth
+    workout_data : dict
+        A workout program object (as returned by workout_list or built
+        by the create helpers).  Must include exercises.
+
+    Returns
+    -------
+    dict with keys: planDuration, planDistance, planTrainingLoad,
+    planSets, planElevGain, planPitch, exerciseBarChart,
+    actualDistance, actualDuration, actualElevGain, actualPitch,
+    actualTrainingLoad, planHybridTotalSets, distanceDisplayUnit.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["workout_calculate"],
+            json=workout_data,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "program calculate")
+    return body["data"]
+
+
+async def fetch_program_detail(auth: StoredAuth, workout_id: str) -> dict:
+    """Fetch full workout program detail by ID.
+
+    GET /training/program/detail
+
+    Returns the complete workout object including exercises, training load,
+    estimated metrics, and metadata.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            _base_url(auth.region) + ENDPOINTS["workout_detail"],
+            params={"id": workout_id, "userId": auth.user_id},
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "program detail")
+    return body["data"]
+
+
+async def update_workout(auth: StoredAuth, workout_data: dict) -> dict:
+    """Update an existing workout program.
+
+    POST /training/program/update with the full workout JSON body.
+    Modify fields on the workout object (returned by list_workouts or
+    fetch_program_detail) and pass the complete modified object.
+
+    Returns the server response data on success.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["workout_update"],
+            json=workout_data,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    _check_response(body, "program update")
+    return body.get("data", {})
+
+
 async def schedule_workout(
     auth: StoredAuth,
     workout_id: str,
@@ -1634,6 +2070,39 @@ async def fetch_user_profile(auth: StoredAuth) -> dict:
     }
 
 
+async def logout(auth: StoredAuth) -> dict:
+    """Logout from the Coros Training Hub (POST /account/logout)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["account_logout"],
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "logout")
+    return body.get("data", body)
+
+
+async def update_account(auth: StoredAuth, updates: dict) -> dict:
+    """Update account profile (POST /account/update).
+
+    Parameters
+    ----------
+    updates : dict
+        Fields to update, e.g. {"nickname": "Runner42", "stature": 178, "weight": 72}.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            _base_url(auth.region) + ENDPOINTS["account_update"],
+            json=updates,
+            headers=_auth_headers(auth),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    _check_response(body, "account update")
+    return body.get("data", body)
+
+
 # ---------------------------------------------------------------------------
 # Mobile token auto-refresh
 # ---------------------------------------------------------------------------
@@ -1809,7 +2278,7 @@ async def fetch_sleep(auth: StoredAuth, start_day: str, end_day: str) -> list[Sl
             max_hr=sd.get("maxHeartRate"),
             quality_score=quality if quality != -1 else None,
         ))
-    return sorted(records, key=lambda r: r.date)
+    return sorted(records, key=lambda r: r.date, reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1832,7 +2301,7 @@ async def fetch_daily_health(
 
     All four data types are fetched in a single API call.
 
-    Returns a list of DailyHealthRecord sorted by date (oldest first).
+    Returns a list of DailyHealthRecord sorted by date (newest first).
     """
     raw = await _fetch_mobile_daily(auth, start_day, end_day, [1, 3, 5, 22])
 
@@ -1868,7 +2337,7 @@ async def fetch_daily_health(
             sleep_quality=quality if quality != -1 else None,
         ))
 
-    return sorted(records, key=lambda r: r.date)
+    return sorted(records, key=lambda r: r.date, reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2075,11 +2544,11 @@ async def import_training_program(
             pass  # best-effort; if catalog lookup fails, keep name=None
 
     if category == "plan":
-        detail_path = "/training/plan/detail"
-        copy_path = "/training/plan/copy"
+        detail_path = ENDPOINTS["plan_detail"]
+        copy_path = ENDPOINTS["plan_copy"]
     else:
-        detail_path = "/training/program/detail"
-        copy_path = "/training/program/copy"
+        detail_path = ENDPOINTS["workout_detail"]
+        copy_path = ENDPOINTS["workout_copy"]
 
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: fetch program detail (GET with query params)
@@ -2130,52 +2599,13 @@ async def import_training_program(
 # Coach briefing orchestrator
 # ---------------------------------------------------------------------------
 
-async def _fetch_with_fallback(coro, fallback: any) -> any:
+import sys
+
+async def _fetch_with_fallback(coro, fallback: any, label: str = "") -> any:
     try:
         return await coro
-    except Exception:
+    except Exception as e:
+        print(f"[coach] Warning: {label} fetch failed ({e}), using fallback", file=sys.stderr)
         return fallback
 
 
-async def fetch_coach_briefing(auth: StoredAuth) -> dict:
-    """Fetch all Coros data sources and compose a coaching briefing.
-
-    Internal data sources (each with independent fallback):
-    - fetch_training_analysis (training load, HRV, performance indices, VO2max)
-    - fetch_sleep (sleep stages via mobile API)
-    - fetch_daily_health (stress, steps, calories via mobile API)
-    - fetch_schedule (planned workouts on calendar)
-    - fetch_dashboard (recovery timer, EvoLab status)
-    - fetch_user_profile (HR/power zones, baselines, maxHR, RHR)
-
-    Returns a structured coaching briefing dict with readiness, fatigue,
-    training status, trends, recommendation, and alerts.
-    """
-    from datetime import datetime, timedelta
-
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(weeks=4)
-    start_day = start_dt.strftime("%Y%m%d")
-    end_day = end_dt.strftime("%Y%m%d")
-
-    analysis = await _fetch_with_fallback(
-        fetch_training_analysis(auth, start_day, end_day), {},
-    )
-    sleep_records = await _fetch_with_fallback(
-        fetch_sleep(auth, start_day, end_day), [],
-    )
-    daily_health = await _fetch_with_fallback(
-        fetch_daily_health(auth, start_day, end_day), [],
-    )
-    schedule = await _fetch_with_fallback(
-        fetch_schedule(auth, start_day, end_day), [],
-    )
-    dashboard = await _fetch_with_fallback(fetch_dashboard(auth), {})
-    profile = await _fetch_with_fallback(fetch_user_profile(auth), {})
-
-    daily_records = analysis.get("daily_records", [])
-    sleep_dicts = [r.model_dump() if hasattr(r, "model_dump") else r for r in sleep_records]
-    health_dicts = [r.model_dump() if hasattr(r, "model_dump") else r for r in daily_health]
-
-    from coach import build_coach_briefing
-    return build_coach_briefing(daily_records, sleep_dicts, schedule, health_dicts, profile, dashboard)

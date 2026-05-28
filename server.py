@@ -32,6 +32,23 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 mcp = FastMCP("coros-ai-coach")
 
+# Sport types that support file download (from COROS activityExportFileTypes.json)
+_SUPPORTED_DOWNLOAD_SPORT_TYPES = frozenset({
+    100, 101, 102, 103, 104, 105,      # Running variants
+    200, 201, 202, 203, 204, 205, 299,  # Cycling variants
+    300, 301,                           # Swimming
+    400, 401, 402,                      # Strength/Training
+    500, 501, 502, 503,                 # Cardio
+    700, 701, 702, 704, 705, 706, 707, 708, 709, 710, 711, 712, 713, 714, 715,  # Outdoor
+    800, 801, 802,                      # Indoor
+    900, 901, 902, 903, 904, 905, 906,  # Water sports
+    1000, 1001, 1002, 1003, 1004, 1005, 1006,  # Winter sports
+    1100, 1101,                         # Multisport
+    1200,                               # Other
+    9800, 9900,                         # System
+    10000, 10001, 10002, 10003,         # More
+})
+
 
 async def _get_auth():
     """Return stored auth, auto-logging in from env vars if the token is missing/expired."""
@@ -230,231 +247,6 @@ async def check_coros_auth() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tool: get_dashboard
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def get_dashboard() -> dict:
-    """
-    Fetch the Coros dashboard snapshot for quick athlete-state assessment.
-
-    Returns current HRV, sleep quality, training readiness, recent activity
-    summaries, and fitness trends — without date parameters. Uses the
-    /dashboard/query endpoint which always returns recent data (typically
-    last 7 days + today).
-
-    Returns
-    -------
-    dict with the full dashboard data payload.
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-    try:
-        data = await _run_with_auth(coros_api.fetch_dashboard, auth)
-        return data
-    except Exception as exc:
-        return _tool_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Tool: get_training_analysis
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def get_training_analysis(
-    weeks: int = 4,
-    include_daily: bool = True,
-    include_summary: bool = False,
-) -> dict:
-    """
-    Fetch the full Coros training analysis ("数据分析") for a configurable
-    time range (up to 24 weeks).
-
-    Merges data from /analyse/dayDetail/query (configurable range, 35 fields
-    per day including HRV) and /analyse/query (fixed 84-day window, 9 sections
-    including records, summaries, and distributions).
-
-    Parameters
-    ----------
-    weeks : int
-        Number of weeks to fetch (1–24). Default: 4.
-    include_daily : bool
-        Include daily_records (35 fields per day). Default True.
-    include_summary : bool
-        Include summary_info (10 distribution charts — large). Default False.
-
-    Returns
-    -------
-    dict always containing:
-
-      week_list (list)
-          12 weekly summaries: firstDayOfWeek, trainingLoad,
-          recomendTlMin, recomendTlMax.
-
-      records (dict)
-          Personal records: distanceRecord, durationRecord, tlRecord.
-
-      sport_statistic (list)
-          Per-sport aggregated stats: sportType, count, distance, duration,
-          trainingLoad, avgHeartRate, avgPace.
-
-      tl_intensity (dict)
-          Weekly training load intensity breakdown: periodLowPct,
-          periodMediumPct, periodHighPct over 6 weeks.
-
-      sport_data_summary (dict)
-          Total activity count and model validity status.
-
-      training_week_stages (list)
-          Training phase stages (may be empty).
-
-    Plus when requested:
-
-      daily_records (list[dict]) — if include_daily=True
-          Per-day 35-field records: date, avg_sleep_hrv, baseline,
-          interval_list, rhr, test_rhr, lthr, training_load,
-          training_load_target, training_load_ratio_state, t7d, t28d,
-          recomend_tl_max/min, tired_rate, tib, ati, cti, performance,
-          distance, duration, vo2max, stamina_level, ltsp, etc.
-
-      summary_info (dict) — if include_summary=True
-          10 distribution charts: disAreaList, timeAreaList, tlAreaList,
-          distanceCountAreaList, distanceTimeAreaList, distanceTlAreaList,
-          hrDisAreaList, hrTimeAreaList, hrTlAreaList, recomendTlInDays.
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-
-    weeks = max(1, min(weeks, 24))
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(weeks=weeks)
-    start_day = start_dt.strftime("%Y%m%d")
-    end_day = end_dt.strftime("%Y%m%d")
-
-    try:
-        data = await _run_with_auth(coros_api.fetch_training_analysis, auth, start_day, end_day)
-        if not include_daily:
-            data.pop("daily_records", None)
-        if not include_summary:
-            data.pop("summary_info", None)
-        return data
-    except Exception as exc:
-        return _tool_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Tool: get_sleep_data
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def get_sleep_data(weeks: int = 4) -> dict:
-    """
-    Fetch nightly sleep data from Coros for a configurable time range.
-
-    Returns per-night sleep stage breakdown (deep, light, REM, awake) and
-    sleep heart rate for each night.  Data comes from the Coros mobile API
-    (apieu.coros.com) which is separate from the Training Hub web API.
-
-    Parameters
-    ----------
-    weeks : int
-        Number of weeks to fetch (1–52). Default: 4.
-
-    Returns
-    -------
-    dict with keys: records (list of nightly records), count, date_range
-    Each record contains:
-      - date: YYYYMMDD (the morning date — sleep started the night before)
-      - total_duration_minutes: total sleep in minutes
-      - phases.deep_minutes: deep sleep
-      - phases.light_minutes: light sleep
-      - phases.rem_minutes: REM sleep
-      - phases.awake_minutes: time awake during the night
-      - phases.nap_minutes: daytime nap time (if any)
-      - avg_hr: average heart rate during sleep
-      - min_hr: minimum heart rate during sleep
-      - max_hr: maximum heart rate during sleep
-      - quality_score: sleep quality score (null if not computed)
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros.", "records": []}
-
-    weeks = max(1, min(weeks, 52))
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(weeks=weeks)
-    start_day = start_dt.strftime("%Y%m%d")
-    end_day = end_dt.strftime("%Y%m%d")
-
-    try:
-        records = await _run_with_auth(coros_api.fetch_sleep, auth, start_day, end_day)
-        return {
-            "records": [r.model_dump() for r in records],
-            "count": len(records),
-            "date_range": f"{start_day} – {end_day}",
-        }
-    except Exception as exc:
-        return _tool_error(exc, records=[])
-
-
-# ---------------------------------------------------------------------------
-# Tool: get_daily_health
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def get_daily_health(weeks: int = 4) -> dict:
-    """
-    Fetch daily health data that is only available via the Coros mobile API.
-
-    This covers data NOT present in get_training_analysis or get_dashboard:
-      - steps: daily step count
-      - calories: total daily calorie expenditure
-      - stress: avg_stress level + stress_duration in seconds
-      - sleep stages: deep, light, REM, awake minutes (same as get_sleep_data)
-
-    All four data types are fetched in a single mobile API call.
-
-    Parameters
-    ----------
-    weeks : int
-        Number of weeks to fetch (1–52). Default: 4.
-
-    Returns
-    -------
-    dict with keys: records (list), count, date_range
-    Each record contains:
-      - date: YYYYMMDD
-      - steps: daily steps
-      - calories: total daily calories
-      - stress.avg_stress: average stress level
-      - stress.stress_duration_seconds: time under stress
-      - sleep_deep_minutes / sleep_light_minutes / sleep_rem_minutes / sleep_awake_minutes
-      - sleep_total_minutes / sleep_avg_hr / sleep_quality
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros.", "records": []}
-
-    weeks = max(1, min(weeks, 52))
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(weeks=weeks)
-    start_day = start_dt.strftime("%Y%m%d")
-    end_day = end_dt.strftime("%Y%m%d")
-
-    try:
-        records = await _run_with_auth(coros_api.fetch_daily_health, auth, start_day, end_day)
-        return {
-            "records": [r.model_dump() for r in records],
-            "count": len(records),
-            "date_range": f"{start_day} – {end_day}",
-        }
-    except Exception as exc:
-        return _tool_error(exc, records=[])
-
-
-# ---------------------------------------------------------------------------
 # Tool: list_activities
 # ---------------------------------------------------------------------------
 
@@ -501,6 +293,39 @@ async def list_activities(
 
 
 # ---------------------------------------------------------------------------
+# Tool: get_team_activities
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_team_activities(team_id: str = "", start_day: str = "", end_day: str = "", size: int = 20) -> dict:
+    """Fetch the team activity feed.
+
+    Parameters
+    ----------
+    team_id : str
+        Team ID (default: auto-detect primary team).
+    start_day : str
+        Start date in YYYYMMDD format.
+    end_day : str
+        End date in YYYYMMDD format.
+    size : int
+        Number of activities to return (default 20).
+
+    Returns
+    -------
+    dict with keys: team_activities (list), count.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros.", "team_activities": []}
+    try:
+        items = await _run_with_auth(coros_api.fetch_activity_team_query, auth, team_id, start_day, end_day, size)
+        return {"team_activities": [a.model_dump() if hasattr(a, "model_dump") else a for a in (items or [])], "count": len(items or [])}
+    except Exception as exc:
+        return _tool_error(exc, team_activities=[])
+
+
+# ---------------------------------------------------------------------------
 # Tool: list_sport_types
 # ---------------------------------------------------------------------------
 
@@ -510,7 +335,7 @@ async def list_sport_types() -> dict:
     List all sport types supported by Coros with their IDs and names.
 
     Useful for finding the correct sport_type ID when creating workouts
-    (create_workout, create_run_workout) or filtering activities.
+    create_workout (cycling/running/strength) or filtering activities.
 
     Returns
     -------
@@ -525,6 +350,60 @@ async def list_sport_types() -> dict:
         return {"sport_types": items, "count": len(items)}
     except Exception as exc:
         return _tool_error(exc, sport_types=[])
+
+
+# ---------------------------------------------------------------------------
+# Tool: import_fit_file
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def import_fit_file(file_path: str) -> dict:
+    """Import a FIT file as a new activity.
+
+    Parameters
+    ----------
+    file_path : str
+        Absolute path to the .fit file on disk.
+
+    Returns
+    -------
+    dict with imported activity data (id, sportType, etc.).
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    if not os.path.exists(file_path):
+        return {"error": f"File not found: {file_path}"}
+    try:
+        return await _run_with_auth(coros_api.fetch_fit_import, auth, file_path)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: delete_fit_import
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def delete_fit_import(import_id: str) -> dict:
+    """Delete a previously imported FIT file activity.
+
+    Parameters
+    ----------
+    import_id : str
+        The ID of the imported FIT session.
+
+    Returns
+    -------
+    dict confirming deletion.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await _run_with_auth(coros_api.fetch_fit_delete, auth, import_id)
+    except Exception as exc:
+        return _tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -559,32 +438,163 @@ async def get_activity_detail(activity_id: str, sport_type: int = 0) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tool: get_activity_file — download URL for FIT/GPX/TCX/KML/CSV activity file
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def download_activity_file(activity_id: str, sport_type: int, file_type: int = 4, output_dir: str = "") -> dict:
+    """
+    Download an activity file (FIT/GPX/TCX/KML/CSV) to local disk.
+
+    Saves the file and returns the local path.
+
+    Parameters
+    ----------
+    activity_id : str
+        The activity ID (labelId) from list_activities.
+    sport_type : int
+        Sport type ID (e.g. 100=Running, 200=Road Bike, 201=Indoor Cycling).
+    file_type : int
+        0=CSV, 1=GPX, 2=KML, 3=TCX, 4=FIT (default 4).
+    output_dir : str
+        Directory to save the file (default: system temp directory).
+
+    Returns
+    -------
+    dict with keys: filePath (str), fileType (str), sizeBytes (int).
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    if sport_type not in _SUPPORTED_DOWNLOAD_SPORT_TYPES:
+        return {"error": f"File download is not supported for sport type {sport_type}."}
+    try:
+        return await _run_with_auth(coros_api.fetch_activity_download, auth, activity_id, sport_type, file_type, output_dir)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: update_activity
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def update_activity(activity_id: str, name: str = "", note: str = "") -> dict:
+    """Update an activity's metadata (name, note).
+
+    Parameters
+    ----------
+    activity_id : str
+        The activity labelId from list_activities.
+    name : str
+        New display name for the activity.
+    note : str
+        New note/description for the activity.
+
+    Returns
+    -------
+    dict with updated activity data.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        updates = {}
+        if name:
+            updates["name"] = name
+        if note:
+            updates["note"] = note
+        if not updates:
+            return {"error": "No fields to update. Provide name or note."}
+        return await _run_with_auth(coros_api.fetch_update_activity, auth, activity_id, updates)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: delete_activity
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def delete_activity(activity_id: str) -> dict:
+    """Delete an activity by ID.
+
+    Parameters
+    ----------
+    activity_id : str
+        The activity labelId from list_activities.
+
+    Returns
+    -------
+    dict confirming deletion.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await _run_with_auth(coros_api.fetch_delete_activity, auth, activity_id)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
 # Tool: list_workouts
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def list_workouts() -> dict:
-    """
-    List all saved workout programs in the Coros account.
+async def manage_workout(
+    action: str,
+    workout_id: str = "",
+    workout_data: dict | None = None,
+) -> dict:
+    """Unified workout management — list, detail, update, copy, delete.
+
+    Parameters
+    ----------
+    action : str
+        "list" — return all saved workout programs.
+        "detail" — get full workout detail by workout_id.
+        "update" — modify a workout (requires workout_data with id).
+        "delete" — delete a workout by workout_id.
+    workout_id : str
+        Workout ID (required for detail/copy/delete).
+    workout_data : dict
+        Full workout JSON (required for update).
 
     Returns
     -------
-    dict with keys: workouts (list), count
-    Each workout contains: id, name, sport_type, sport_name,
-    estimated_time_seconds, estimated_distance, training_load,
-    create_timestamp, exercise_count, exercises (list of steps with
-    name, duration_seconds, power_low_w, power_high_w, intensity_type,
-    hr_type, intensity_percent, intensity_percent_extend, overview,
-    rest_seconds, sort_no, sets)
+    dict with workout data, list, or confirmation.
     """
     auth = await _get_auth()
     if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros.", "workouts": []}
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+
+    valid_actions = {"list", "detail", "update", "delete"}
+    if action not in valid_actions:
+        return {"error": f"Invalid action '{action}'. Use one of: {', '.join(sorted(valid_actions))}."}
+
     try:
-        workouts = await _run_with_auth(coros_api.fetch_workouts, auth)
-        return {"workouts": workouts, "count": len(workouts)}
+        if action == "list":
+            workouts = await _run_with_auth(coros_api.fetch_workouts, auth)
+            return {"workouts": workouts, "count": len(workouts)}
+
+        elif action == "detail":
+            if not workout_id:
+                return {"error": "workout_id is required for detail action."}
+            return await _run_with_auth(coros_api.fetch_program_detail, auth, workout_id)
+
+        elif action == "update":
+            if not workout_data:
+                return {"error": "workout_data is required for update action."}
+            return await _run_with_auth(coros_api.update_workout, auth, workout_data)
+
+        elif action == "delete":
+            if not workout_id:
+                return {"error": "workout_id is required for delete action."}
+            await _run_with_auth(coros_api.delete_workout, auth, workout_id)
+            return {"deleted": True, "workout_id": workout_id, "message": "Workout deleted."}
     except Exception as exc:
-        return _tool_error(exc, workouts=[])
+        return _tool_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -593,132 +603,95 @@ async def list_workouts() -> dict:
 
 @mcp.tool()
 async def create_workout(
+    workout_type: str,
     name: str,
-    steps: list[dict],
-    sport_type: int = 2,
+    steps: list[dict] | None = None,
+    exercises: list[dict] | None = None,
+    sport_type: int | None = None,
+    hr_type: int = 3,
+    intensity_type: int = 2,
+    value_type: int | None = None,
+    sets: int = 1,
 ) -> dict:
-    """
-    Create a new structured workout in the Coros account.
-
-    The workout appears in the Coros app under Workouts and can be synced
-    to the watch for guided execution.
+    """Create a structured workout in the Coros account. Supports cycling, running, and strength.
 
     Parameters
     ----------
+    workout_type : str
+        "cycling", "running", or "strength".
     name : str
-        Workout name (e.g. "Z2 Erholung 60min").
-    steps : list[dict]
-        List of workout steps. Each step is either a plain step or a repeat group.
+        Workout name (e.g. "Z2 Endurance 60min").
+    steps : list[dict], required for cycling/running
+        List of workout steps. Each step is a plain step or a repeat group.
 
-        Plain step:
-          - name (str): step label, e.g. "10:00 Einfahren"
-          - duration_minutes (float): step duration in minutes
-          - power_low_w (int): lower power target in watts
-          - power_high_w (int): upper power target in watts
+        Cycling step fields: name, duration_minutes, power_low_w, power_high_w
+        Running step fields: name, duration_minutes, hr_low (zone 1-6 or bpm),
+          hr_high (optional), pace_low (optional sec/km), pace_high (optional)
 
-        Repeat group (for intervals):
-          - repeat (int): number of repetitions
-          - steps (list[dict]): sub-steps (same format as plain steps)
-
-        Example:
-          [
-            {"name": "Warm-up", "duration_minutes": 10, "power_low_w": 148, "power_high_w": 192},
-            {"repeat": 3, "steps": [
-              {"name": "Sweetspot", "duration_minutes": 10, "power_low_w": 265, "power_high_w": 285},
-              {"name": "Recovery", "duration_minutes": 3, "power_low_w": 150, "power_high_w": 175},
-            ]},
-            {"name": "Cool-down", "duration_minutes": 10, "power_low_w": 100, "power_high_w": 165},
-          ]
-    sport_type : int
-        Sport type ID. Default 2 = Indoor Cycling (Rollen).
-        Use 200 for Road Bike (outdoor), 201 for Indoor Cycling (alt).
+        Repeat group: {"repeat": N, "steps": [...]}
+    exercises : list[dict], required for strength
+        Each with: origin_id, name, overview, target_type (2=time, 3=reps),
+        target_value, rest_seconds.
+    sport_type : int, optional
+        Cycling: 2=Indoor (default), 200=Road Bike.
+        Running: 1=Running (default), 102=Trail, 103=Track.
+    hr_type : int, running only
+        Zone model: 1=MaxHR, 2=%HRR, 3=%LTHR (default).
+    intensity_type : int, running only
+        2=Heart Rate (default), 3=Pace, 6=Power, 7=Cadence, 8=Equivalent Pace.
+    value_type : int, running only
+        1=absolute display, 2=percentage display.
+    sets : int, strength only
+        Number of circuit repetitions (default 1).
 
     Returns
     -------
-    dict with keys: workout_id, name, total_minutes, steps_count, message
+    dict with: workout_id, name, message
     """
     auth = await _get_auth()
     if auth is None:
         return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
     try:
-        workout_id = await _run_with_auth(coros_api.create_workout, auth, name, steps, sport_type)
-        total_minutes, steps_count = _summarize_steps(steps)
-        return {
-            "workout_id": workout_id,
-            "name": name,
-            "total_minutes": total_minutes,
-            "steps_count": steps_count,
-            "message": "Workout created. Open Coros app → Workouts to sync to watch.",
-        }
-    except Exception as exc:
-        return _tool_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Tool: delete_workout
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def delete_workout(
-    workout_id: str,
-) -> dict:
-    """
-    Delete a workout program from the Coros account.
-
-    Parameters
-    ----------
-    workout_id : str
-        The workout ID to delete (from list_workouts).
-
-    Returns
-    -------
-    dict with keys: deleted, workout_id, message
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-    try:
-        await _run_with_auth(coros_api.delete_workout, auth, workout_id)
-        return {
-            "deleted": True,
-            "workout_id": workout_id,
-            "message": "Workout deleted.",
-        }
-    except Exception as exc:
-        return _tool_error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Tool: delete_plan
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def delete_plan(
-    plan_id: str,
-) -> dict:
-    """
-    Delete a training plan from the Coros account.
-
-    Parameters
-    ----------
-    plan_id : str
-        The plan ID to delete (from list_workouts with category="plan",
-        or from list_planned_activities).
-
-    Returns
-    -------
-    dict with keys: deleted, plan_id, message
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-    try:
-        await _run_with_auth(coros_api.delete_plan, auth, plan_id)
-        return {
-            "deleted": True,
-            "plan_id": plan_id,
-            "message": "Plan deleted.",
-        }
+        if workout_type == "cycling":
+            sport = sport_type if sport_type is not None else 2
+            workout_id = await _run_with_auth(coros_api.create_workout, auth, name, steps or [], sport)
+            total_minutes, steps_count = _summarize_steps(steps or [])
+            return {
+                "workout_id": workout_id,
+                "name": name,
+                "total_minutes": total_minutes,
+                "steps_count": steps_count,
+                "message": "Workout created. Open Coros app → Workouts to sync to watch.",
+            }
+        elif workout_type == "running":
+            sport = sport_type if sport_type is not None else 1
+            VALID_INTENSITY_TYPES = {2, 3, 6, 7, 8}
+            if intensity_type not in VALID_INTENSITY_TYPES:
+                return {
+                    "error": f"intensity_type {intensity_type} is not valid. "
+                             f"Valid: 2=Heart Rate, 3=Pace, 6=Power, 7=Cadence, 8=Equivalent Pace."
+                }
+            workout_id = await _run_with_auth(
+                coros_api.create_run_workout, auth, name, steps or [], sport, hr_type, intensity_type, value_type,
+            )
+            total_minutes, steps_count = _summarize_steps(steps or [])
+            return {
+                "workout_id": workout_id,
+                "name": name,
+                "total_minutes": f"{int(total_minutes // 60)}:{int(total_minutes % 60):02d}",
+                "steps_count": steps_count,
+                "message": "Running workout created. Open Coros app → Workouts to sync to watch.",
+            }
+        elif workout_type == "strength":
+            workout_id = await _run_with_auth(coros_api.create_strength_workout, auth, name, exercises or [], sets)
+            return {
+                "workout_id": workout_id,
+                "name": name,
+                "sets": sets,
+                "exercise_count": len(exercises or []),
+            }
+        else:
+            return {"error": f"Unknown workout_type '{workout_type}'. Use 'cycling', 'running', or 'strength'."}
     except Exception as exc:
         return _tool_error(exc)
 
@@ -876,52 +849,6 @@ async def remove_scheduled_workout(
 
 
 # ---------------------------------------------------------------------------
-# Tool: create_strength_workout
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def create_strength_workout(
-    name: str,
-    exercises: list[dict],
-    sets: int = 1,
-) -> dict:
-    """
-    Create a new structured strength workout program.
-
-    Parameters
-    ----------
-    name : str
-        Workout name.
-    exercises : list of dicts, each with:
-        - origin_id (str): exercise catalogue ID from list_exercises
-        - name (str): T-code name (e.g. "T1061")
-        - overview (str): sid_ key (e.g. "sid_strength_squats")
-        - target_type (int): 2=time in seconds, 3=reps
-        - target_value (int): number of seconds or reps
-        - rest_seconds (int): rest after this exercise (default 60)
-    sets : int
-        Number of circuit repetitions (default 1).
-
-    Returns
-    -------
-    dict with keys: workout_id, name, sets, exercise_count
-    """
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-    try:
-        workout_id = await _run_with_auth(coros_api.create_strength_workout, auth, name, exercises, sets)
-        return {
-            "workout_id": workout_id,
-            "name": name,
-            "sets": sets,
-            "exercise_count": len(exercises),
-        }
-    except Exception as exc:
-        return _tool_error(exc)
-
-
-# ---------------------------------------------------------------------------
 # Tool: list_exercises
 # ---------------------------------------------------------------------------
 
@@ -950,116 +877,6 @@ async def list_exercises(sport_type: int = 4) -> dict:
         return {"exercises": items, "count": len(items), "sport_type": sport_type}
     except Exception as exc:
         return _tool_error(exc, exercises=[])
-
-
-# ---------------------------------------------------------------------------
-# Tool: create_run_workout
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def create_run_workout(
-    name: str,
-    steps: list[dict],
-    sport_type: int = 1,
-    hr_type: int = 3,
-    intensity_type: int = 2,
-    value_type: int | None = None,
-) -> dict:
-    """
-    Create a running workout with heart rate and pace targets.
-
-    Zone mode (hr_low 1-6): auto-looks up bpm from your COROS zone tables
-    via /account/query, sets intensityPercent (zone ratio x1000, e.g. 59000)
-    and marks isIntensityPercent=True so the watch displays percentage labels.
-    hr_type selects the zone model:
-      1=MaxHR, 2=%HRR (储备心率), 3=%LTHR (乳酸阈值, default).
-
-    BPM mode (hr_low > 6): absolute bpm values passed directly (no
-    intensityPercent auto-generation).
-
-    Parameters
-    ----------
-    name : str
-        Workout name (e.g. "Z2 耐力跑 60min").
-    steps : list[dict]
-        List of workout steps. Each step is either a plain step or a repeat group.
-
-        Plain step:
-          - name (str): step label
-          - duration_minutes (float): step duration in minutes
-          - hr_low (int): zone 1-6, or absolute bpm if > 6
-          - hr_high (int, optional): zone 1-6, or absolute bpm
-          - pace_low (int, optional): lower pace target in sec/km
-          - pace_high (int, optional): upper pace target in sec/km
-
-        Repeat group (for intervals):
-          - repeat (int): number of repetitions
-          - steps (list[dict]): sub-steps (same format as plain steps)
-
-        Zone mode example:
-          [
-            {"name": "10:00 热身", "duration_minutes": 10, "hr_low": 1},
-            {"name": "40:00 有氧耐力", "duration_minutes": 40, "hr_low": 2},
-            {"name": "10:00 冷却", "duration_minutes": 10, "hr_low": 1},
-          ]
-
-        Interval example (5×3min VO2max):
-          [
-            {"name": "15:00 热身", "duration_minutes": 15, "hr_low": 1},
-            {"repeat": 5, "steps": [
-              {"name": "3:00 VO2max", "duration_minutes": 3, "hr_low": 5},
-              {"name": "3:00 恢复", "duration_minutes": 3, "hr_low": 1},
-            ]},
-            {"name": "10:00 冷却", "duration_minutes": 10, "hr_low": 1},
-          ]
-    sport_type : int
-        Sport type ID. Default 1 = Running.
-        Use 102 for Trail Running, 103 for Track Running.
-    hr_type : int
-        Zone model: 1=%MaxHR, 2=%HRR (储备心率), 3=%LTHR (乳酸阈值, default).
-        Only used in zone mode (hr_low 1-6).
-    intensity_type : int
-        Intensity calculation model. Default 2 = Heart Rate.
-          2 = Heart Rate   — with hr_type controls display name:
-              hr_type=1 → "%最大心率", hr_type=2 → "%储备心率", hr_type=3 → "%乳酸阈心率"
-              Pass value_type=1 for absolute "心率" display instead.
-          3 = Pace         (配速, use with pace_low/pace_high in sec/km)
-          6 = Power        (功率, use with power targets in watts)
-          7 = Cadence      (步频, use with cadence targets in spm)
-          8 = Equivalent Pace (等强配速, pace-based equivalent-intensity model)
-    value_type : int, optional
-        1 = absolute display ("心率" / "配速" / "功率" / "步频" / "等强配速")
-        2 = percentage display ("%最大心率" / "%储备心率" / "%乳酸阈心率" / "%乳酸阈配速" / "等强阈值配速")
-        Default: 2 for HR types (intensity_type=2), 1 for pace/power/cadence types.
-        Auto-applied via isIntensityPercent + intensityPercent in exercise payload.
-
-    Returns
-    -------
-    dict with keys: workout_id, name, total_minutes, steps_count, message
-    """
-    VALID_INTENSITY_TYPES = {2, 3, 6, 7, 8}
-    if intensity_type not in VALID_INTENSITY_TYPES:
-        return {
-            "error": f"intensity_type {intensity_type} is not a valid COROS intensity model. "
-                     f"Valid: 2=Heart Rate (with hr_type controls %%MaxHR/%%HRR/%%LTHR display), "
-                     f"3=Pace, 6=Power, 7=Cadence, 8=Equivalent Pace."
-        }
-    auth = await _get_auth()
-    if auth is None:
-        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
-    try:
-        workout_id = await _run_with_auth(coros_api.create_run_workout, auth, name, steps, sport_type, hr_type, intensity_type, value_type)
-        total_minutes, steps_count = _summarize_steps(steps)
-        return {
-            "workout_id": workout_id,
-            "name": name,
-            "total_minutes": f"{int(total_minutes // 60)}:{int(total_minutes % 60):02d}",
-            "steps_count": steps_count,
-            "message": "Running workout created. Open Coros app → Workouts to sync to watch.",
-        }
-    except Exception as exc:
-        return _tool_error(exc)
-
 
 # ---------------------------------------------------------------------------
 # Tool: get_user_profile
@@ -1092,6 +909,65 @@ async def get_user_profile() -> dict:
     try:
         data = await _run_with_auth(coros_api.fetch_user_profile, auth)
         return data
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: logout_coros
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def logout_coros() -> dict:
+    """Logout from the Coros Training Hub.
+
+    Invalidates the current session token on the server.
+    After calling this, you must re-authenticate.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated."}
+    try:
+        return await _run_with_auth(coros_api.logout, auth)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: update_account
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def update_account(nickname: str = "", stature: int = 0, weight: float = 0.0) -> dict:
+    """Update Coros account profile fields.
+
+    Parameters
+    ----------
+    nickname : str
+        New display name.
+    stature : int
+        Height in centimeters.
+    weight : float
+        Weight in kilograms.
+
+    Returns
+    -------
+    dict with updated profile data.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    updates = {}
+    if nickname:
+        updates["nickname"] = nickname
+    if stature:
+        updates["stature"] = stature
+    if weight:
+        updates["weight"] = weight
+    if not updates:
+        return {"error": "No fields to update. Provide nickname, stature, or weight."}
+    try:
+        return await _run_with_auth(coros_api.update_account, auth, updates)
     except Exception as exc:
         return _tool_error(exc)
 
@@ -1223,56 +1099,406 @@ async def import_training_program(linked_id: str, category: str = "workout", reg
 
 
 # ---------------------------------------------------------------------------
-# Tool: get_coach_briefing
+# Tool: estimate_workout
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def get_coach_briefing() -> dict:
+async def estimate_workout(workout_id: str = "", workout_data: dict | None = None) -> dict:
+    """Estimate training metrics for a workout — by saved ID or raw JSON.
+
+    Calls /training/program/calculate with the full workout structure
+    to return estimated duration, distance, training load, and an
+    exercise bar chart for visualization.
+
+    Parameters
+    ----------
+    workout_id : str
+        Saved workout program ID (from manage_workout action="list").
+    workout_data : dict, optional
+        Raw workout JSON with exercises array. Use this to preview a
+        workout before saving it.
+
+    At least one of workout_id or workout_data must be provided.
+
+    Returns
+    -------
+    dict with keys: planDuration, planDistance, planTrainingLoad,
+    planSets, exerciseBarChart, etc.
     """
-    Get a complete AI coaching briefing with readiness, fatigue, training
-    status, HRV/sleep trends, personalized recommendation, and alerts.
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
 
-    Internally fetches and cross-references data from dashboard, training
-    analysis, sleep, daily health, schedule, and user profile.  No need to
-    call separate MCP tools — this single call does all the analysis.
+    try:
+        if workout_id and not workout_data:
+            workout_data = await coros_api._fetch_raw_workout(auth, workout_id)
+            if workout_data is None:
+                return {"error": f"Workout not found: {workout_id}"}
+        if not workout_data:
+            return {"error": "Provide workout_id or workout_data."}
+        return await _run_with_auth(coros_api.fetch_program_calculate, auth, workout_data)
+    except Exception as exc:
+        return _tool_error(exc)
 
-    The briefing applies three evidence-based coaching frameworks:
-    1. Training Stress Balance (CTL/ATL/TSB — Coggan/Friel)
-    2. Coros EvoLab (training_load_ratio_state, tired_rate, stamina_level)
-    3. Sleep-first recovery prioritization (2025 endurance coaching consensus)
+
+# ---------------------------------------------------------------------------
+# Tool: get_dashboard_detail
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_dashboard_detail() -> dict:
+    """Fetch enriched Coros dashboard with 7-day details and planned targets.
+
+    GET /dashboard/detail/query — returns richer data than get_dashboard,
+    including upcoming scheduled workouts (targetList), daily metrics
+    (detailList), recent sport activities (sportDataList), and training
+    summary (summaryInfo: ATI, CTI, tiredRate, trainingLoadRatio).
 
     Returns
     -------
     dict with keys:
-      overall_status : str
-          "Race Ready" | "Ready to Train" | "Proceed with Caution" |
-          "Recovery Needed" | "Rest Day Recommended"
-      readiness : dict
-          score (Ready/Moderate/Recover/Rest), ratio, contributing_factors
-      fatigue : dict
-          level (Fresh/Normal/Fatigued/Overtrained), fatigue_rate,
-          contributing_factors
-      training_status : dict
-          state, base_fitness (t28d), load_impact (t7d), intensity_trend
-      hrv : dict
-          latest, 7day_avg, baseline, trend, status, deviation_pct
-      sleep : dict
-          avg_duration_hours, quality_score, trend, debt_hours
-      today_recommendation : dict
-          primary, alternative, intensity, duration_minutes, why
-      weekly_summary : dict
-          this_week_load, last_week_load, load_change_pct,
-          total_duration_hours, total_distance_km, sessions_completed
-      trends : dict
-          fitness, fatigue, hrv, sleep
-      alerts : list[str]
-          Warning conditions (empty list if everything is fine)
+    - summaryInfo: training status summary
+    - detailList: 7 days of daily metrics (ATI, CTI, stamina, tiredRate)
+    - sportDataList: recent sport activity summaries
+    - targetList: upcoming scheduled workouts for next 7 days
+    - currentWeekRecord / record: distance/duration/tl records
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+
+    try:
+        return await _run_with_auth(coros_api.fetch_dashboard_detail, auth)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_team_dashboard
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_team_dashboard() -> dict:
+    """Fetch team dashboard with performance scores and training zones.
+
+    GET /dashboard/team/query — returns performance scores and zone tables
+    that aren't available in the personal dashboard. Includes:
+
+    - Performance scores (0-100): aerobicEnduranceScore,
+      anaerobicCapacityScore, anaerobicEnduranceScore,
+      lactateThresholdCapacityScore
+    - LTHR and lthrZone: lactate threshold heart rate with 6-zone breakdown
+    - LTSP and ltspZone: lactate threshold pace with pace zone breakdown
+    - fitnessMaxHr, cycleLevelHr, fullRecoveryHours
+    - sportDataSummary: total activity count
+
+    Returns
+    -------
+    dict with keys: summaryInfo (scores + zones), sportDataSummary.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+
+    try:
+        return await _run_with_auth(coros_api.fetch_team_dashboard, auth)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_team_info
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_team_info(team_id: str = "") -> dict:
+    """Fetch single team detail (GET /team/info).
+
+    Parameters
+    ----------
+    team_id : str
+        Team ID (default: auto-detect primary team).
+
+    Returns
+    -------
+    dict with team details (name, members, creator, etc.).
     """
     auth = await _get_auth()
     if auth is None:
         return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
     try:
-        return await _run_with_auth(coros_api.fetch_coach_briefing, auth)
+        return await _run_with_auth(coros_api.fetch_team_info, auth, team_id)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Coach analysis helpers
+# ---------------------------------------------------------------------------
+
+async def _safe_fetch(fn, fallback=None):
+    """Call fn() and return fallback on any exception."""
+    try:
+        return await fn()
+    except Exception:
+        return fallback
+
+
+async def _fetch_daily_status_data(weeks: int = 2) -> dict:
+    """Fetch 5 APIs needed for daily status: training_analysis, sleep, daily_health, dashboard, profile.
+
+    Each data source is independently fetched with fallback.
+    """
+    from datetime import datetime, timedelta
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(weeks=max(weeks, 1))
+    start_day = start_dt.strftime("%Y%m%d")
+    end_day = end_dt.strftime("%Y%m%d")
+
+    auth = await _get_auth()
+
+    analysis = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_training_analysis, auth, start_day, end_day),
+        {},
+    )
+    daily_records = analysis.get("daily_records", []) if isinstance(analysis, dict) else []
+
+    sleep_raw = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_sleep, auth, start_day, end_day),
+        [],
+    )
+    sleep_records = [
+        r.model_dump() if hasattr(r, "model_dump") else r for r in (sleep_raw or [])
+    ]
+
+    health_raw = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_daily_health, auth, start_day, end_day),
+        [],
+    )
+    health_records = [
+        r.model_dump() if hasattr(r, "model_dump") else r for r in (health_raw or [])
+    ]
+
+    dashboard = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_dashboard, auth), {},
+    )
+
+    profile = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_user_profile, auth), {},
+    )
+
+    return {
+        "daily_records": daily_records,
+        "sleep_records": sleep_records,
+        "health_records": health_records,
+        "dashboard": dashboard or {},
+        "profile": profile or {},
+    }
+
+
+async def _fetch_weekly_report_data(weeks: int = 4) -> dict:
+    """Fetch 3 APIs needed for weekly report: training_analysis, sleep, activities.
+
+    Each data source is independently fetched with fallback.
+    """
+    from datetime import datetime, timedelta
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(weeks=max(weeks, 1))
+    start_day = start_dt.strftime("%Y%m%d")
+    end_day = end_dt.strftime("%Y%m%d")
+
+    auth = await _get_auth()
+
+    analysis = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_training_analysis, auth, start_day, end_day),
+        {},
+    )
+    daily_records = analysis.get("daily_records", []) if isinstance(analysis, dict) else []
+
+    sleep_raw = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_sleep, auth, start_day, end_day),
+        [],
+    )
+    sleep_records = [
+        r.model_dump() if hasattr(r, "model_dump") else r for r in (sleep_raw or [])
+    ]
+
+    activities_raw, _ = await _safe_fetch(
+        lambda: _run_with_auth(coros_api.fetch_activities, auth, start_day, end_day, size=50),
+        ([], 0),
+    )
+    activities = [
+        a.model_dump() if hasattr(a, "model_dump") else a for a in (activities_raw or [])
+    ]
+
+    return {
+        "daily_records": daily_records,
+        "sleep_records": sleep_records,
+        "activities": activities,
+    }
+# ---------------------------------------------------------------------------
+# Scene tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_daily_status(weeks: int = 2) -> dict:
+    """Fetch daily health and training data from Coros.
+
+    Returns raw data from 5 endpoints: training_analysis, sleep, daily_health,
+    dashboard, user_profile. Use when you need a snapshot of current state.
+
+    Parameters
+    ----------
+    weeks : int
+        Number of weeks of data (default 2, max 12).
+
+    Returns
+    -------
+    dict with: daily_records, sleep_records, health_records, dashboard, profile
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await _fetch_daily_status_data(weeks=min(weeks, 12))
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+@mcp.tool()
+async def get_weekly_report(weeks: int = 4) -> dict:
+    """Fetch weekly training data from Coros.
+
+    Returns raw data from 3 endpoints: training_analysis, sleep, activities.
+    Use when you need a multi-week view of training volume and sleep.
+
+    Parameters
+    ----------
+    weeks : int
+        Number of weeks of data (default 4, max 24).
+
+    Returns
+    -------
+    dict with: daily_records, sleep_records, activities
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await _fetch_weekly_report_data(weeks=min(weeks, 24))
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+@mcp.tool()
+async def analyze_workout(activity_id: str, sport_type: int = 0) -> dict:
+    """Get full detail for a single completed workout with all metrics.
+
+    Parameters
+    ----------
+    activity_id : str
+        The activity ID (labelId) from list_activities.
+    sport_type : int
+        Sport type ID (e.g., 100=Running, 200=Road Bike). Default 0.
+
+    Returns
+    -------
+    dict with full activity detail including lap data, heart rate zones, pace, and power.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        detail = await _run_with_auth(
+            coros_api.fetch_activity_detail, auth, activity_id, sport_type,
+        )
+        if hasattr(detail, "model_dump"):
+            return detail.model_dump()
+        return detail
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+@mcp.tool()
+async def check_plan(start_day: str, end_day: str) -> dict:
+    """Fetch scheduled training plan summary from Coros.
+
+    Returns projected ATI, CTI, and training load ratio per week.
+
+    Parameters
+    ----------
+    start_day : str
+        Start date in YYYYMMDD format.
+    end_day : str
+        End date in YYYYMMDD format.
+
+    Returns
+    -------
+    dict with raw schedule summary data (weeks, projections, load curves)
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        raw = await _run_with_auth(coros_api.fetch_schedule_summary, auth, start_day, end_day)
+        if hasattr(raw, "model_dump"):
+            return raw.model_dump()
+        return raw
+    except Exception as exc:
+        return _tool_error(exc)
+
+
+@mcp.tool()
+async def manage_plan(
+    action: str,
+    plan_data: dict | None = None,
+    plan_id: str = "",
+) -> dict:
+    """Unified training plan management — list, create, update, or delete.
+
+    Parameters
+    ----------
+    action : str
+        "list" — return all training plans
+        "create" — create a new plan (requires plan_data)
+        "update" — update an existing plan (requires plan_data with id)
+        "delete" — delete a plan by plan_id
+    plan_data : dict, optional
+        Full plan JSON (required for create/update).
+    plan_id : str, optional
+        Plan ID (required for delete).
+
+    Returns
+    -------
+    dict with plan data, list, or confirmation.
+    """
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+
+    valid_actions = {"list", "create", "update", "delete"}
+    if action not in valid_actions:
+        return {"error": f"Invalid action '{action}'. Use one of: {', '.join(sorted(valid_actions))}."}
+
+    try:
+        if action == "list":
+            items = await _run_with_auth(coros_api.fetch_plans, auth)
+            return {"plans": items or [], "count": len(items or [])}
+        elif action == "create":
+            if plan_data is None:
+                return {"error": "plan_data is required for create action."}
+            return await _run_with_auth(coros_api.create_plan, auth, plan_data)
+        elif action == "update":
+            if plan_data is None:
+                return {"error": "plan_data is required for update action."}
+            return await _run_with_auth(coros_api.update_plan, auth, plan_data)
+        elif action == "delete":
+            if not plan_id:
+                return {"error": "plan_id is required for delete action."}
+            await _run_with_auth(coros_api.delete_plan, auth, plan_id)
+            return {"deleted": True, "plan_id": plan_id, "message": "Plan deleted."}
     except Exception as exc:
         return _tool_error(exc)
 

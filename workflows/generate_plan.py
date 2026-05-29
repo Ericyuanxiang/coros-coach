@@ -246,7 +246,17 @@ async def run(auth, start_day: str, phase: str = "base",
             "fatigue_state": current_fatigue_state,
         },
         "tl_range": {"min": tl_min, "max": tl_max, "ai_chooses": True},
-        "weekly_tl_target": None,  # AI picks within tl_range
+        "tl_decision_guide": {
+            "fatigue_state_1": "Fresh → 偏上限 (max × 0.9)",
+            "fatigue_state_2": "Normal → 中位 (midpoint)",
+            "fatigue_state_3": "Overtrained → 下限或减量 (min)",
+            "load_ratio_high": "当前负荷比 > 1.2 → 偏下限",
+            "load_ratio_low": "当前负荷比 < 0.8 → 可以偏上限",
+            "phase_base": "基础期 → 保守中位, 侧重 Z2 积累",
+            "phase_build": "进展期 → 偏上限, 加质量课比例",
+            "phase_peak": "巅峰期 → 上限, 最大质量刺激",
+            "phase_taper": "减量期 → 50-70% 上限, 保持强度减量",
+        },
         "workout_pool": [
             {"title": w["title"], "tl": w["tl"], "linked_id": w["linked_id"],
              "id": w["id"], "duration_s": w["duration_s"]}

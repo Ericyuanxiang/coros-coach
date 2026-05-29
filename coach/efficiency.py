@@ -109,8 +109,9 @@ def analyse_pace_at_hr(activities: list[dict], target_hr: int = 150) -> dict:
     if len(near_hr) < 2:
         return {"trend": "Insufficient data at this HR", "target_hr": target_hr}
 
-    first_avg = sum(r["_pace"] for r in near_hr[:3]) / min(3, len(near_hr[:3]))
-    last_avg = sum(r["_pace"] for r in near_hr[-3:]) / min(3, len(near_hr[-3:]))
+    half = max(1, len(near_hr) // 2)
+    first_avg = sum(r["_pace"] for r in near_hr[:half]) / half
+    last_avg = sum(r["_pace"] for r in near_hr[-half:]) / half
     delta_pct = ((last_avg - first_avg) / first_avg * 100) if first_avg else 0
 
     return {

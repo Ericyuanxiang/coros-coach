@@ -2,7 +2,6 @@
 
 Modules that provide unique value beyond what the Coros app already shows:
   - efficiency       Pace-vs-HR crossover → is training working?
-  - recommendation   Decision matrix → what to train today
   - safety           Multi-signal alerts + thresholds → injury risk detection
 """
 
@@ -87,5 +86,4 @@ from .safety import (            # noqa: E402
     generate_alerts,
     build_evidence_summary,
 )
-from .recommendation import generate_recommendation  # noqa: E402
 from .efficiency import analyse_efficiency, analyse_pace_at_hr  # noqa: E402

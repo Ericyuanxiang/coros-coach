@@ -75,9 +75,13 @@ async def run(auth, start_day: str, phase: str = "base",
     analysis = await fetch_training_analysis(auth, today, today)
     daily = analysis.get("daily_records", [])
 
-    # Current load metrics
-    current_cti = daily[0].get("training_load_ratio_state", 2) if daily else 2
-    current_ratio = daily[0].get("training_load_ratio", 0.8) if daily else 0.8
+    # Current load + fatigue metrics
+    latest = daily[0] if daily else {}
+    current_ratio = latest.get("training_load_ratio", 0.8)
+    current_ati = latest.get("ati", 0)
+    current_cti_val = latest.get("cti", 50)
+    current_tired_rate = latest.get("tired_rate", 0)
+    current_fatigue_state = latest.get("tired_rate_state_new", 2)
 
     # ── Step 2: Get Coros weekly TL recommendation ──
     week_list = analysis.get("week_list", [])
@@ -95,7 +99,10 @@ async def run(auth, start_day: str, phase: str = "base",
 
     # ── Step 3: Apply safety caps ──
     if current_ratio >= MAX_LOAD_RATIO:
-        tl_max = min(tl_max, current_cti * 0.8 if daily else 300)
+        tl_max = min(tl_max, int(current_cti_val * 0.8))
+    if current_fatigue_state == 3:  # overtrained → force deload
+        tl_max = min(tl_max, 300)
+        tl_min = min(tl_min, 200)
     weekly_tl_target = min(tl_max, max(tl_min, int((tl_min + tl_max) / 2)))
 
     # ── Step 4: Distribute load across days ──
@@ -273,7 +280,13 @@ async def run(auth, start_day: str, phase: str = "base",
     return {
         "week_start": start_day,
         "phase": phase,
-        "current_load_ratio": current_ratio,
+        "current_state": {
+            "load_ratio": current_ratio,
+            "ati": current_ati,
+            "cti": current_cti_val,
+            "tired_rate": current_tired_rate,
+            "fatigue_state": current_fatigue_state,
+        },
         "coros_recommended_tl": {"min": tl_min, "max": tl_max},
         "weekly_tl_target": weekly_tl_target,
         "total_planned_tl": total_planned_tl,

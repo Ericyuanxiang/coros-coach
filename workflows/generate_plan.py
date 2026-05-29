@@ -45,7 +45,8 @@ PHASE_TEMPLATES = {
 }
 
 # Safety limits
-MAX_LOAD_RATIO = 1.3
+LOAD_RATIO_DANGER = 1.5   # Coros: >1.5 injury risk — hard cap
+LOAD_RATIO_WARNING = 1.3  # Coros: approaching limit — advisory
 MAX_CONSECUTIVE_HARD = 2  # quality + long count as "hard"
 MIN_EASY_AFTER_HARD = 1
 
@@ -98,7 +99,8 @@ async def run(auth, start_day: str, phase: str = "base",
         tl_min = 350
 
     # ── Step 3: Compute safe TL range (AI picks the actual target within this) ──
-    if current_ratio >= MAX_LOAD_RATIO:
+    # Safety: only cap at danger zone (1.5). 1.3-1.5 is advisory for AI
+    if current_ratio >= LOAD_RATIO_DANGER:
         tl_max = min(tl_max, int(current_cti_val * 0.8))
     if current_fatigue_state == 3:  # overtrained → force deload
         tl_max = min(tl_max, 300)
@@ -250,8 +252,10 @@ async def run(auth, start_day: str, phase: str = "base",
             "fatigue_state_1": "Fresh → 偏上限 (max × 0.9)",
             "fatigue_state_2": "Normal → 中位 (midpoint)",
             "fatigue_state_3": "Overtrained → 下限或减量 (min)",
-            "load_ratio_high": "当前负荷比 > 1.2 → 偏下限",
-            "load_ratio_low": "当前负荷比 < 0.8 → 可以偏上限",
+            "load_ratio_normal": "0.8-1.2 → 高效区，按原计划",
+            "load_ratio_warning": "1.2-1.5 → 警戒区，可继续但注意恢复",
+            "load_ratio_danger": "> 1.5 → 强制减量（Coros 红色区）",
+            "load_ratio_low": "< 0.8 → 负荷不足，可加量",
             "phase_base": "基础期 → 保守中位, 侧重 Z2 积累",
             "phase_build": "进展期 → 偏上限, 加质量课比例",
             "phase_peak": "巅峰期 → 上限, 最大质量刺激",

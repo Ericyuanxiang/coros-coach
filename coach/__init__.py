@@ -1,15 +1,15 @@
 """Coach analysis engine — pure functions, no I/O.
 
 Modules that provide unique value beyond what the Coros app already shows:
+  - efficiency       Pace-vs-HR crossover → is training working?
   - recommendation   Decision matrix → what to train today
-  - safety           Multi-signal alerts → injury risk detection
-  - thresholds       All tunable constants in one place
+  - safety           Multi-signal alerts + thresholds → injury risk detection
 """
 
 from statistics import mean
 from typing import Any
 
-from .thresholds import *  # noqa: F403
+TREND_PCT = 5.0  # min % change to call a trend Rising or Falling
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -31,7 +31,6 @@ def _avg(values: list[float | None]) -> float | None:
 def _trend(recent: float | None, previous: float | None,
            threshold_pct: float | None = None) -> str:
     """Return Rising / Stable / Falling based on % change between two averages."""
-    from .thresholds import TREND_PCT
     if threshold_pct is None:
         threshold_pct = TREND_PCT
     if recent is None or previous is None or previous == 0:
@@ -55,7 +54,6 @@ def _confidence(n_values: int) -> str:
 def _trend_detail(recent: float | None, previous: float | None,
                   threshold_pct: float | None = None) -> dict:
     """Return {direction, delta_pct, confidence} for a pair of averages."""
-    from .thresholds import TREND_PCT
     if threshold_pct is None:
         threshold_pct = TREND_PCT
     if recent is None or previous is None or previous == 0:
@@ -90,3 +88,4 @@ from .safety import (            # noqa: E402
     build_evidence_summary,
 )
 from .recommendation import generate_recommendation  # noqa: E402
+from .efficiency import analyse_efficiency, analyse_pace_at_hr  # noqa: E402

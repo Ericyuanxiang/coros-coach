@@ -1,21 +1,31 @@
-"""Safety analysis — guardrails, alerts, evidence summary."""
+"""Safety analysis — guardrails, alerts, evidence summary.
+
+Data sources:
+  - daily_records  ← fetch_training_analysis() → /analyse/*
+     用到: avg_sleep_hrv, baseline, rhr, training_load_ratio_state,
+           tired_rate_state_new, training_load
+  - sleep_records  ← fetch_sleep() → mobile API
+     用到: total_duration_minutes
+"""
 
 from . import _avg
-from .thresholds import (
-    HRV_ALERT_STREAK,
-    HRV_ALERT_THRESHOLD,
-    SLEEP_OPTIMAL_MINUTES,
-    SLEEP_DEBT_ALERT_HOURS,
-    RHR_ELEVATED_ALERT_BPM,
-    INACTIVITY_DAYS,
-    DAYS_SINCE_TRAINING_RETURN,
-    SLEEP_DEBT_CAUTION,
-    SLEEP_MIN_ATHLETE,
-    RHR_ELEVATED_CAUTION,
-    HIGH_LOAD_DAYS,
-    RETURN_VOLUME_FACTOR,
-    INTENSITY_RANK,
-)
+
+# ---------------------------------------------------------------------------
+# Thresholds — tune these per athlete
+# ---------------------------------------------------------------------------
+HRV_ALERT_STREAK = 3           # consecutive days below threshold → alert
+HRV_ALERT_THRESHOLD = -15      # % deviation from baseline
+SLEEP_OPTIMAL_MINUTES = 480    # 8 hours
+SLEEP_DEBT_ALERT_HOURS = 2     # debt > this over 3 nights → alert
+RHR_ELEVATED_ALERT_BPM = 5     # bpm above 7d avg → alert
+INACTIVITY_DAYS = 5            # days without training → alert
+DAYS_SINCE_TRAINING_RETURN = 14  # >2 weeks off → return-to-training
+SLEEP_DEBT_CAUTION = 2         # hours (3-night avg)
+SLEEP_MIN_ATHLETE = 5          # hours — below this injury risk 1.7x
+RHR_ELEVATED_CAUTION = 5       # bpm above 7d avg
+HIGH_LOAD_DAYS = 3             # consecutive days with ratio_state=3
+RETURN_VOLUME_FACTOR = 0.5     # 50% rule (Mujika & Padilla)
+INTENSITY_RANK = {"Rest": 0, "Easy": 1, "Moderate": 2, "Hard": 3}
 
 
 # ---------------------------------------------------------------------------

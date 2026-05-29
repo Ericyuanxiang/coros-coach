@@ -107,6 +107,9 @@ async def run(auth, start_day: str, phase: str = "base",
         tl_min = min(tl_min, 200)
 
     # ── Step 4: Distribute load across days ──
+    # Rationale: 周一恢复(周末长距离后) 周三强度(周中峰值)
+    #             周六长距离(周末时间充裕) 周二/四轻松(缓冲)
+    # AI can override day type/pct based on athlete preferences
     template = PHASE_TEMPLATES.get(phase, DEFAULT_WEEK)
     start_date = datetime.strptime(start_day, "%Y%m%d")
 
@@ -257,10 +260,11 @@ async def run(auth, start_day: str, phase: str = "base",
             "load_ratio_warning": "1.2-1.5 → 警戒区，可继续但注意恢复",
             "load_ratio_danger": "> 1.5 → 强制减量（Coros 红色区）",
             "load_ratio_low": "< 0.8 → 负荷不足，可加量",
-            "phase_base": "基础期 → 保守中位, 侧重 Z2 积累",
-            "phase_build": "进展期 → 偏上限, 加质量课比例",
-            "phase_peak": "巅峰期 → 上限, 最大质量刺激",
-            "phase_taper": "减量期 → 50-70% 上限, 保持强度减量",
+            "phase_base": "基础期 → 保守中位, 侧重 Z2 积累, 1次强度/周",
+            "phase_build": "进展期 → 偏上限, 2次强度/周, 长距离加量",
+            "phase_peak": "巅峰期 → 上限, 2次高质量, 模拟比赛配速",
+            "phase_taper": "减量期 → 50-70% 上限, 保持强度但大幅减量",
+            "day_rationale": "周一恢复(长距离后) 周三强度(周中峰值) 周六长距离(周末时间充裕) 周二/四轻松(缓冲强度日) 周五休息(长距离前)",
         },
         "workout_pool": [
             {"title": w["title"], "tl": w["tl"], "linked_id": w["linked_id"],

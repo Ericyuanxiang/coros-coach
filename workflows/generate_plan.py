@@ -50,34 +50,6 @@ MAX_CONSECUTIVE_HARD = 2  # quality + long count as "hard"
 MIN_EASY_AFTER_HARD = 1
 
 
-def _ai_workout_prompt(day_type: str, target_tl: int) -> dict:
-    """Return a structured prompt for AI to create a custom workout."""
-    prompts = {
-        "recovery": {
-            "description": f"恢复跑，目标 TL≈{target_tl}",
-            "guide": "Z1-Z2 低强度，30-45 分钟，心率不超过 Z2",
-        },
-        "easy": {
-            "description": f"轻松有氧跑，目标 TL≈{target_tl}",
-            "guide": "Z2 中等强度，45-75 分钟，心率保持在有氧区",
-        },
-        "quality": {
-            "description": f"质量训练，目标 TL≈{target_tl}",
-            "guide": "间歇或节奏跑，包含热身+主课+放松。主课可用 400m/800m/1km 重复或 Z3-Z5 连续跑",
-        },
-        "long": {
-            "description": f"长距离跑，目标 TL≈{target_tl}",
-            "guide": "Z2 配速，60-150 分钟，目标是有氧耐力积累",
-        },
-    }
-    p = prompts.get(day_type, prompts["easy"])
-    return {
-        "type": day_type,
-        "target_training_load": target_tl,
-        "task": f"使用 create_workout 创建一个跑步训练: {p['description']}。{p['guide']}。",
-    }
-
-
 async def run(auth, start_day: str, phase: str = "base",
              auto_schedule: bool = False) -> dict:
     """Generate a week-long training plan.
@@ -212,61 +184,24 @@ async def run(auth, start_day: str, phase: str = "base",
         if r:
             imported[r["linked_id"]] = r
 
-    # Type-priority keywords for workout matching
-    TYPE_KEYWORDS = {
-        "recovery": ("恢复", "基础训练", "轻松"),
-        "easy":     ("基础训练", "MAF", "轻松跑"),
-        "quality":  ("间歇", "VO2max", "节奏", "金字塔", "速度"),
-        "long":     ("LSD", "长距离", "耐力"),
-    }
-
-    # Match each day to the best workout in our imported pool
+    # Mark each day with AI action needed — AI picks from pool or creates custom
     for day in daily_plan:
-        if day["target_tl"] == 0:
+        if day["target_tl"] <= 0:
             day["workout_name"] = "休息"
-            continue
-
-        keywords = TYPE_KEYWORDS.get(day["type"], ())
-        best = None
-        best_score = float("inf")
-
-        for wid, w in imported.items():
-            tl = w["tl"]
-            title = w["title"]
-
-            # Hard filters
-            if day["type"] == "recovery" and tl > 70:
-                continue
-            if day["type"] == "long" and tl < 100:
-                continue
-            if day["type"] == "quality" and tl < 80:
-                continue
-            if day["type"] == "easy" and tl > 120:
-                continue
-
-            # Score: TL mismatch (primary) + type penalty
-            tl_diff = abs(tl - day["target_tl"])
-            type_match = any(kw in title for kw in keywords)
-            type_penalty = 0 if type_match else 60  # prefer type-matched workouts
-            score = tl_diff + type_penalty
-
-            if score < best_score:
-                best_score = score
-                best = w
-        if best:
-            day["workout_name"] = best["title"]
-            day["workout_tl"] = best["tl"]
-            day["linked_id"] = best["linked_id"]
-            day["imported_id"] = best["id"]
+            day["ai_needed"] = False
         else:
-            # No library match — ask AI to create one
-            day["workout_name"] = None
-            day["workout_tl"] = day["target_tl"]
-            day["ai_workout"] = _ai_workout_prompt(day["type"], day["target_tl"])
+            day["ai_needed"] = True
+            day["ai_action"] = (
+                "从 workout_pool 选择匹配 type + TL 的课程，"
+                "池中没有合适的就调用 create_workout 自建"
+            )
+
+    # Trigger 1: safety violation → AI must adjust whole plan
+    # Trigger 2: no matching workout in pool → per-day create_workout
 
     # ── Step 6: Safety check ──
     safety_checks = []
-    total_planned_tl = sum(d.get("workout_tl", 0) or 0 for d in daily_plan)
+    total_planned_tl = sum(d.get("target_tl", 0) or 0 for d in daily_plan)
     hard_days = [d for d in daily_plan if d["type"] in ("quality", "long")]
     if len(hard_days) > 3:
         safety_checks.append("高强度日超过 3 天")
@@ -320,8 +255,22 @@ async def run(auth, start_day: str, phase: str = "base",
         "coros_recommended_tl": {"min": tl_min, "max": tl_max},
         "weekly_tl_target": weekly_tl_target,
         "total_planned_tl": total_planned_tl,
+        "workout_pool": [
+            {"title": w["title"], "tl": w["tl"], "linked_id": w["linked_id"],
+             "id": w["id"], "duration_s": w["duration_s"]}
+            for w in imported.values()
+        ],
         "daily_plan": daily_plan,
         "safety_checks": safety_checks,
         "projection": projection,
         "status": "review" if safety_checks else "ready",
+        "ai_triggers": {
+            "safety_violation": bool(safety_checks),
+            "no_pool_match": any(d.get("ai_needed") and d["target_tl"] > 0 for d in daily_plan),
+            "note": (
+                "两个触发 AI 创作的场景: "
+                "1) safety_checks 非空 → 计划超负荷推荐或超 1.3 负荷比，AI 必须调整 TL 分配; "
+                "2) daily_plan 中 ai_needed=True → 该日无池中匹配课程，AI 自建或池中选"
+            ),
+        },
     }

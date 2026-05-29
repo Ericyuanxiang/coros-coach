@@ -193,7 +193,8 @@ async def run(auth, start_day: str, phase: str = "base",
         else:
             day["ai_needed"] = True
             day["ai_action"] = (
-                f"选周 TL(在{tl_min}-{tl_max}范围内) × {day['tl_pct']}% = 该日 TL, "
+                f"默认: 周TL × {day['tl_pct']}% = 该日TL。"
+                "type/pct 是框架默认值，可据运动员偏好调整(如长距离改周日)。"
                 "然后从 workout_pool 匹配或 create_workout 自建"
             )
 

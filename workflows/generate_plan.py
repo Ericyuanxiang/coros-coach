@@ -50,41 +50,32 @@ MAX_CONSECUTIVE_HARD = 2  # quality + long count as "hard"
 MIN_EASY_AFTER_HARD = 1
 
 
-def _make_template(day_type: str, target_tl: int) -> str:
-    """Generate a structured workout name when no library match is found."""
-    templates = {
-        "recovery": [
-            (40, "恢复跑 30min (Z1)"),
-            (55, "轻松跑 40min (Z1-Z2)"),
-            (65, "基础跑 45min (Z2 下限)"),
-        ],
-        "easy": [
-            (70, "轻松跑 45min (Z2)"),
-            (90, "基础跑 60min (Z2)"),
-            (110, "耐力跑 75min (Z2)"),
-        ],
-        "quality": [
-            (100, "节奏跑 40min (Z3)"),
-            (120, "间歇跑 8×400m (Z4-Z5)"),
-            (140, "VO2max 间歇 5×800m (Z5)"),
-            (160, "阶梯间歇 10km (Z4-Z5)"),
-        ],
-        "long": [
-            (120, "长距离 80min (Z2)"),
-            (150, "LSD 100min (Z2)"),
-            (180, "长距离 120min (Z2)"),
-            (210, "超长距离 150min (Z2)"),
-        ],
+def _ai_workout_prompt(day_type: str, target_tl: int) -> dict:
+    """Return a structured prompt for AI to create a custom workout."""
+    prompts = {
+        "recovery": {
+            "description": f"恢复跑，目标 TL≈{target_tl}",
+            "guide": "Z1-Z2 低强度，30-45 分钟，心率不超过 Z2",
+        },
+        "easy": {
+            "description": f"轻松有氧跑，目标 TL≈{target_tl}",
+            "guide": "Z2 中等强度，45-75 分钟，心率保持在有氧区",
+        },
+        "quality": {
+            "description": f"质量训练，目标 TL≈{target_tl}",
+            "guide": "间歇或节奏跑，包含热身+主课+放松。主课可用 400m/800m/1km 重复或 Z3-Z5 连续跑",
+        },
+        "long": {
+            "description": f"长距离跑，目标 TL≈{target_tl}",
+            "guide": "Z2 配速，60-150 分钟，目标是有氧耐力积累",
+        },
     }
-    options = templates.get(day_type, [(50, "自定义训练")])
-    best = options[0][1]
-    best_diff = float("inf")
-    for tl, name in options:
-        diff = abs(tl - target_tl)
-        if diff < best_diff:
-            best_diff = diff
-            best = name
-    return best
+    p = prompts.get(day_type, prompts["easy"])
+    return {
+        "type": day_type,
+        "target_training_load": target_tl,
+        "task": f"使用 create_workout 创建一个跑步训练: {p['description']}。{p['guide']}。",
+    }
 
 
 async def run(auth, start_day: str, phase: str = "base",
@@ -268,9 +259,10 @@ async def run(auth, start_day: str, phase: str = "base",
             day["linked_id"] = best["linked_id"]
             day["imported_id"] = best["id"]
         else:
-            day["workout_name"] = _make_template(day["type"], day["target_tl"])
+            # No library match — ask AI to create one
+            day["workout_name"] = None
             day["workout_tl"] = day["target_tl"]
-            day["custom"] = True
+            day["ai_workout"] = _ai_workout_prompt(day["type"], day["target_tl"])
 
     # ── Step 6: Safety check ──
     safety_checks = []

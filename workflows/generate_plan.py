@@ -10,7 +10,7 @@ Flow:
 7. Return plan for review (no auto-scheduling)
 """
 
-from dataclasses import dataclass
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -127,40 +127,101 @@ async def run(auth, start_day: str, phase: str = "base") -> dict:
             "target_tl": day_tl,
         })
 
-    # ── Step 5: Match workouts from library (best-effort) ──
+    # ── Step 5: Match workouts from library ──
+    # Import a diverse pool of workouts, calculate their TL, then match
+    from coros_api import import_training_program, fetch_program_calculate, _fetch_raw_workout
+
     try:
         catalog = await fetch_training_library("cn", "zh-CN", category="workout", sport_type="run")
     except Exception:
         catalog = []
 
-    workouts_by_tl = sorted(catalog, key=lambda w: abs(
-        (getattr(w, "estimated_training_load", None) or 50) - 100
-    ))
+    # Pick diverse candidates (different difficulty levels)
+    pool: list[str] = []
+    seen_difficulty: set[str] = set()
+    for w in catalog:
+        diff = w.difficulties[0] if w.difficulties else "any"
+        if len(pool) >= 12:
+            break
+        if diff not in seen_difficulty or len(pool) < 6:
+            pool.append(w.linked_id)
+            seen_difficulty.add(diff)
 
+    # Import + calculate TL in parallel
+    imported: dict[str, dict] = {}
+
+    async def _import_and_calc(linked_id: str, title: str):
+        try:
+            result = await import_training_program(auth, linked_id, "workout", 1, title)
+            wid = result["imported_id"]
+            raw = await _fetch_raw_workout(auth, wid)
+            est = await fetch_program_calculate(auth, raw)
+            return {
+                "linked_id": linked_id,
+                "id": wid,
+                "title": title,
+                "tl": est.get("planTrainingLoad", 50),
+                "duration_s": est.get("planDuration", 3600),
+            }
+        except Exception:
+            return None
+
+    tasks = []
+    for w in catalog:
+        if w.linked_id in pool:
+            tasks.append(_import_and_calc(w.linked_id, w.title))
+    results = await asyncio.gather(*tasks)
+
+    for r in results:
+        if r:
+            imported[r["linked_id"]] = r
+
+    # Type-priority keywords for workout matching
+    TYPE_KEYWORDS = {
+        "recovery": ("恢复", "基础训练", "轻松"),
+        "easy":     ("基础训练", "MAF", "轻松跑"),
+        "quality":  ("间歇", "VO2max", "节奏", "金字塔", "速度"),
+        "long":     ("LSD", "长距离", "耐力"),
+    }
+
+    # Match each day to the best workout in our imported pool
     for day in daily_plan:
         if day["target_tl"] == 0:
             day["workout_name"] = "休息"
             continue
-        # Simple matching: find workout nearest to target TL
+
+        keywords = TYPE_KEYWORDS.get(day["type"], ())
         best = None
-        best_diff = float("inf")
-        for w in workouts_by_tl:
-            w_tl = getattr(w, "estimated_training_load", None)
-            if w_tl is None:
+        best_score = float("inf")
+
+        for wid, w in imported.items():
+            tl = w["tl"]
+            title = w["title"]
+
+            # Hard filters
+            if day["type"] == "recovery" and tl > 70:
                 continue
-            # Filter by type
-            if day["type"] == "recovery" and w_tl > 80:
+            if day["type"] == "long" and tl < 100:
                 continue
-            if day["type"] == "long" and w_tl < 120:
+            if day["type"] == "quality" and tl < 80:
                 continue
-            diff = abs(w_tl - day["target_tl"])
-            if diff < best_diff:
-                best_diff = diff
+            if day["type"] == "easy" and tl > 120:
+                continue
+
+            # Score: TL mismatch (primary) + type penalty
+            tl_diff = abs(tl - day["target_tl"])
+            type_match = any(kw in title for kw in keywords)
+            type_penalty = 0 if type_match else 60  # prefer type-matched workouts
+            score = tl_diff + type_penalty
+
+            if score < best_score:
+                best_score = score
                 best = w
         if best:
-            day["workout_name"] = best.title
-            day["workout_tl"] = getattr(best, "estimated_training_load", None)
-            day["linked_id"] = best.linked_id
+            day["workout_name"] = best["title"]
+            day["workout_tl"] = best["tl"]
+            day["linked_id"] = best["linked_id"]
+            day["imported_id"] = best["id"]
         else:
             day["workout_name"] = "手动安排"
             day["workout_tl"] = day["target_tl"]

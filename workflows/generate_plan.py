@@ -97,13 +97,12 @@ async def run(auth, start_day: str, phase: str = "base",
     if tl_min is None:
         tl_min = 350
 
-    # ── Step 3: Apply safety caps ──
+    # ── Step 3: Compute safe TL range (AI picks the actual target within this) ──
     if current_ratio >= MAX_LOAD_RATIO:
         tl_max = min(tl_max, int(current_cti_val * 0.8))
     if current_fatigue_state == 3:  # overtrained → force deload
         tl_max = min(tl_max, 300)
         tl_min = min(tl_min, 200)
-    weekly_tl_target = min(tl_max, max(tl_min, int((tl_min + tl_max) / 2)))
 
     # ── Step 4: Distribute load across days ──
     template = PHASE_TEMPLATES.get(phase, DEFAULT_WEEK)
@@ -115,7 +114,7 @@ async def run(auth, start_day: str, phase: str = "base",
     for dow in range(7):
         day_type, fraction = template.get(dow, ("easy", 0.10))
         day_date = (start_date + timedelta(days=dow)).strftime("%Y%m%d")
-        day_tl = int(weekly_tl_target * fraction) if day_type != "rest" else 0
+        day_tl_pct = int(fraction * 100) if day_type != "rest" else 0
 
         # Safety: cap consecutive hard days
         if day_type in ("quality", "long"):
@@ -132,7 +131,7 @@ async def run(auth, start_day: str, phase: str = "base",
             "date": day_date,
             "dow": dow + 1,
             "type": day_type,
-            "target_tl": day_tl,
+            "tl_pct": day_tl_pct,  # AI × weekly TL = actual target
         })
 
     # ── Step 5: Match workouts from library ──
@@ -186,27 +185,21 @@ async def run(auth, start_day: str, phase: str = "base",
 
     # Mark each day with AI action needed — AI picks from pool or creates custom
     for day in daily_plan:
-        if day["target_tl"] <= 0:
+        if day["tl_pct"] <= 0:
             day["workout_name"] = "休息"
             day["ai_needed"] = False
         else:
             day["ai_needed"] = True
             day["ai_action"] = (
-                "从 workout_pool 选择匹配 type + TL 的课程，"
-                "池中没有合适的就调用 create_workout 自建"
+                f"选周 TL(在{tl_min}-{tl_max}范围内) × {day['tl_pct']}% = 该日 TL, "
+                "然后从 workout_pool 匹配或 create_workout 自建"
             )
-
-    # Trigger 1: safety violation → AI must adjust whole plan
-    # Trigger 2: no matching workout in pool → per-day create_workout
 
     # ── Step 6: Safety check ──
     safety_checks = []
-    total_planned_tl = sum(d.get("target_tl", 0) or 0 for d in daily_plan)
     hard_days = [d for d in daily_plan if d["type"] in ("quality", "long")]
     if len(hard_days) > 3:
         safety_checks.append("高强度日超过 3 天")
-    if total_planned_tl > weekly_tl_target * 1.2:
-        safety_checks.append(f"计划 TL({total_planned_tl})超目标({weekly_tl_target})20%")
     for i in range(len(hard_days) - 2):
         if (hard_days[i + 1]["dow"] - hard_days[i]["dow"] == 1 and
                 hard_days[i + 2]["dow"] - hard_days[i + 1]["dow"] == 1):
@@ -252,9 +245,8 @@ async def run(auth, start_day: str, phase: str = "base",
             "tired_rate": current_tired_rate,
             "fatigue_state": current_fatigue_state,
         },
-        "coros_recommended_tl": {"min": tl_min, "max": tl_max},
-        "weekly_tl_target": weekly_tl_target,
-        "total_planned_tl": total_planned_tl,
+        "tl_range": {"min": tl_min, "max": tl_max, "ai_chooses": True},
+        "weekly_tl_target": None,  # AI picks within tl_range
         "workout_pool": [
             {"title": w["title"], "tl": w["tl"], "linked_id": w["linked_id"],
              "id": w["id"], "duration_s": w["duration_s"]}
@@ -266,7 +258,7 @@ async def run(auth, start_day: str, phase: str = "base",
         "status": "review" if safety_checks else "ready",
         "ai_triggers": {
             "safety_violation": bool(safety_checks),
-            "no_pool_match": any(d.get("ai_needed") and d["target_tl"] > 0 for d in daily_plan),
+            "no_pool_match": any(d.get("ai_needed") and d["tl_pct"] > 0 for d in daily_plan),
             "note": (
                 "两个触发 AI 创作的场景: "
                 "1) safety_checks 非空 → 计划超负荷推荐或超 1.3 负荷比，AI 必须调整 TL 分配; "

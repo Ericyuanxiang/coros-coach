@@ -105,11 +105,20 @@ async def run(auth, start_day: str, phase: str = "base",
     start_date = datetime.strptime(start_day, "%Y%m%d")
     week_dates = [(start_date + timedelta(days=d)).strftime("%Y%m%d") for d in range(7)]
 
+    # Recommend phase based on state (AI can override)
+    if train_days_7d == 0 or (ati_14d_ago and current_ati < ati_14d_ago * 0.5):
+        suggested_phase = "base"
+    elif current_ratio > 1.3:
+        suggested_phase = "taper"
+    else:
+        suggested_phase = phase
+
     # Return framework if Phase 1 only
     if ai_decision is None:
         return {
             "status": "pending",
             "week_start": start_day, "phase": phase,
+            "suggested_phase": suggested_phase,
             "week_dates": week_dates,  # 7 ISO dates for AI to fill
             "fill": {
                 "weekly_tl": {

@@ -102,7 +102,10 @@ async def run(auth, start_day: str, phase: str = "base",
         for w in catalog
     ]
 
-    start_date = datetime.strptime(start_day, "%Y%m%d")
+    try:
+        start_date = datetime.strptime(start_day, "%Y%m%d")
+    except ValueError:
+        return {"status": "rejected", "reason": f"日期格式错误: '{start_day}'. 请使用 YYYYMMDD 格式, 例如 '20260601'."}
     week_dates = [(start_date + timedelta(days=d)).strftime("%Y%m%d") for d in range(7)]
 
     # Recommend phase based on state (AI can override)
@@ -123,16 +126,18 @@ async def run(auth, start_day: str, phase: str = "base",
             "fill": {
                 "weekly_tl": {
                     "type": "int",
-                    "coros_recommends": f"{tl_min}-{tl_max}",
-                    "hint": f"疲劳度={current_fatigue_state} (1=Fresh→偏上限, 2=Normal→中位, 3=Overtrained→下限), "
-                           f"负荷比={current_ratio}, "
-                           f"ATI趋势: 7天前={ati_7d_ago}, 14天前={ati_14d_ago}, 现在={current_ati} "
-                           f"({'下降中→保守' if ati_7d_ago and current_ati < ati_7d_ago * 0.7 else '稳定/上升→可推进'})",
+                    "coros_recommends": {"min": tl_min, "max": tl_max},
+                    "suggested": tl_min + int((tl_max - tl_min) * (0.3 if current_fatigue_state == 1 else 0.5)),
+                    "hint": f"fatigue={current_fatigue_state} (1=Fresh→偏上限, 2=Normal, 3=Overtrained→下限), "
+                           f"ratio={current_ratio:.1f}, "
+                           f"ATI_trend={current_ati}(now) vs {ati_7d_ago}(7d) vs {ati_14d_ago}(14d) — "
+                           + ("下降中→保守" if ati_7d_ago and current_ati < ati_7d_ago * 0.7 else "稳定/上升→可推进"),
                 },
                 "daily_plan": {
                     "type": "list[7 days]",
                     "format": '{"date": "YYYYMMDD", "type": "rest|recovery|easy|quality|long", "tl_pct": int}',
-                    "hint": "AI 自定类型+百分比, 遵守 rules. 记住: LSD 练有氧, 间歇练无氧 — 相同 TL 完全不同效果, 类型匹配必须准确",
+                    "hint": "AI 自定类型+百分比, 遵守 rules. bounds 在 context.bounds 里. LSD练有氧,间歇练无氧 — 类型匹配优先于 TL 匹配.",
+                    "valid_ranges": {p: {k: v for k, v in b.items()} for p, b in PHASE_BOUNDS.items()},
                     "phase_guide": {
                         "base":  "1 次强度/周, 长距离 ~30%, 侧重 Z2 积累",
                         "build": "2 次强度/周, 长距离 ~30%, 质量课比例增加",
@@ -253,7 +258,8 @@ async def run(auth, start_day: str, phase: str = "base",
                 bound_violations.append(f"{day['date']}: easy {pct}% 超 {lo}-{hi}%")
     if bound_violations:
         return {"status": "retry",
-                "reason": f"{len(bound_violations)} 天超出阶段配比: {'; '.join(bound_violations[:3])}"}
+                "reason": f"{len(bound_violations)} 天超出阶段配比: {'; '.join(bound_violations[:3])}",
+                "bounds": {k: v for k, v in bounds.items() if k != "rest_days"}}
 
     # Advisory (best practice, not safety)
     if daily_plan[0].get("type") not in ("recovery", "rest"):
@@ -396,6 +402,7 @@ async def run(auth, start_day: str, phase: str = "base",
                 "load_ratio": round((ws.get("actualTrainingLoadRatio") or 0) * 100),
                 "plan_time": f"{ws.get('planDuration', 0) // 3600}h{(ws.get('planDuration', 0) % 3600) // 60}m",
                 "plan_training_load": ws.get("planTrainingLoad"),
+                "note": "plan_training_load 是投影值(含所有已排课), 可能不等于你的 weekly_tl 目标",
             }
     except Exception as e:
         warnings.append(f"投影获取失败: {e}")

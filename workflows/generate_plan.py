@@ -245,30 +245,6 @@ async def run(auth, start_day: str, phase: str = "base",
             if pct < lo:
                 warnings.append(f"{day['date']}: easy {pct}% 偏低, 建议 ≥{lo}%")
 
-    # ── Type consistency: course title should match day type ──
-    TYPE_SIGNALS = {
-        "recovery": ("恢复", "基础训练", "轻松"),
-        "easy": ("基础训练", "MAF", "轻松"),
-        "quality": ("间歇", "VO2max", "节奏", "金字塔", "速度"),
-        "long": ("LSD", "长距离", "耐力"),
-    }
-    for day in daily_plan:
-        tp = day.get("type", "")
-        w = imported.get(day["date"])
-        if not w or tp not in TYPE_SIGNALS:
-            continue
-        title = w.get("title", "")
-        if not any(k in title for k in TYPE_SIGNALS[tp]):
-            warnings.append(f"{day['date']} ({tp}): {title} 不是典型的 {tp} 课程")
-
-    # ── Long run must be substantially different from easy days ──
-    easy_max = max((w["tl"] for d, w in imported.items()
-                    if any(day.get("type") == "easy" for day in daily_plan if day["date"] == d)), default=0)
-    long_tl = next((w["tl"] for d, w in imported.items()
-                    if any(day.get("type") == "long" for day in daily_plan if day["date"] == d)), 0)
-    if long_tl and easy_max and long_tl <= easy_max:
-        warnings.append(f"长距离日 TL({long_tl}) <= 轻松日最大 TL({easy_max}), 不应相同")
-
     # Advisory (best practice, not safety)
     if daily_plan[0].get("type") not in ("recovery", "rest"):
         warnings.append("周一建议恢复或休息")
@@ -298,6 +274,40 @@ async def run(auth, start_day: str, phase: str = "base",
 
     if not imported:
         return {"status": "rejected", "reason": "没有成功导入任何课程"}
+
+    # ── Type consistency — 3 groups, cross-group mismatches are rejected ──
+    TYPE_GROUP = {
+        "recovery": "low", "easy": "low",
+        "quality": "high",
+        "long": "endurance",
+    }
+    TYPE_KEYWORDS = {
+        "low": ("恢复", "基础训练", "MAF", "轻松"),
+        "high": ("间歇", "VO2max", "节奏", "金字塔", "速度"),
+        "endurance": ("LSD", "长距离", "耐力"),
+    }
+    for day in daily_plan:
+        tp = day.get("type", "")
+        w = imported.get(day["date"])
+        if not w or tp not in TYPE_GROUP:
+            continue
+        expected_group = TYPE_GROUP[tp]
+        title = w.get("title", "")
+        actual_group = next((g for g, kw in TYPE_KEYWORDS.items()
+                             if any(k in title for k in kw)), None)
+        if actual_group is None:
+            continue
+        if expected_group != actual_group:
+            return {"status": "rejected",
+                    "reason": f"{day['date']} ({tp}): {title} 是 {actual_group} 类型, 需要 {expected_group} 类型"}
+
+    # ── Long run must be substantially different from easy days ──
+    easy_max = max((w["tl"] for d, w in imported.items()
+                    if any(day.get("type") == "easy" for day in daily_plan if day["date"] == d)), default=0)
+    long_tl = next((w["tl"] for d, w in imported.items()
+                    if any(day.get("type") == "long" for day in daily_plan if day["date"] == d)), 0)
+    if long_tl and easy_max and long_tl <= easy_max:
+        warnings.append(f"长距离日 TL({long_tl}) <= 轻松日最大 TL({easy_max}), 不应相同")
 
     # ── Validate per-workout TL ──
     day_overshoots = []

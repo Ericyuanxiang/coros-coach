@@ -13,6 +13,13 @@ from datetime import datetime, timedelta
 LOAD_RATIO_DANGER = 1.5
 LOAD_RATIO_WARNING = 1.3
 
+PHASE_BOUNDS = {
+    "base":  {"quality": (15, 30), "long": (20, 35), "recovery": (5, 15), "rest_days": (1, 3)},
+    "build": {"quality": (20, 35), "long": (25, 40), "recovery": (5, 15), "rest_days": (1, 2)},
+    "peak":  {"quality": (20, 35), "long": (30, 45), "recovery": (5, 15), "rest_days": (1, 3)},
+    "taper": {"quality": (15, 25), "long": (15, 30), "recovery": (5, 15), "rest_days": (2, 4)},
+}
+
 RULES = [
     "硬日(quality/long)后一天必须是 easy/recovery/rest  [代码强制]",
     "连续硬日不超过 2 天  [代码强制]",
@@ -178,6 +185,24 @@ async def run(auth, start_day: str, phase: str = "base",
         return {"status": "rejected", "reason": "一周至少需要 1 天休息"}
     if daily_plan[6].get("type") != "rest":
         return {"status": "rejected", "reason": "周日必须是休息日"}
+
+    # ── Validate against phase bounds ──
+    bounds = PHASE_BOUNDS.get(phase, PHASE_BOUNDS["base"])
+    for day in daily_plan:
+        tp = day.get("type", "")
+        pct = day.get("tl_pct", 0) or 0
+        if tp == "quality":
+            lo, hi = bounds["quality"]
+            if pct < lo or pct > hi:
+                warnings.append(f"{day['date']}: quality {pct}% 超出范围 {lo}-{hi}%")
+        elif tp == "long":
+            lo, hi = bounds["long"]
+            if pct < lo or pct > hi:
+                warnings.append(f"{day['date']}: long {pct}% 超出范围 {lo}-{hi}%")
+        elif tp == "recovery":
+            lo, hi = bounds.get("recovery", (5, 15))
+            if pct > hi:
+                warnings.append(f"{day['date']}: recovery {pct}% 偏重, 建议 ≤{hi}%")
 
     # Advisory (best practice, not safety)
     if daily_plan[0].get("type") not in ("recovery", "rest"):

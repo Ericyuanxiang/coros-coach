@@ -119,15 +119,7 @@ async def run(auth, start_day: str, phase: str = "base",
     except Exception:
         catalog = []
 
-    pool_ids: list[str] = []
-    seen_diff: set[str] = set()
-    for w in catalog:
-        diff = w.difficulties[0] if w.difficulties else "any"
-        if len(pool_ids) >= 12:
-            break
-        if diff not in seen_diff or len(pool_ids) < 6:
-            pool_ids.append(w.linked_id)
-            seen_diff.add(diff)
+    pool_ids = [w.linked_id for w in catalog]  # full catalog
 
     imported: dict[str, dict] = {}
 
@@ -146,7 +138,15 @@ async def run(auth, start_day: str, phase: str = "base",
         except Exception:
             return None
 
-    tasks = [_import_and_calc(w.linked_id, w.title) for w in catalog if w.linked_id in pool_ids]
+    # Batch imports to avoid overwhelming the server
+    candidates = [w for w in catalog if w.linked_id in pool_ids]
+    sem = asyncio.Semaphore(5)  # max 5 concurrent imports
+
+    async def _import_limited(w):
+        async with sem:
+            return await _import_and_calc(w.linked_id, w.title)
+
+    tasks = [_import_limited(w) for w in candidates]
     results = await asyncio.gather(*tasks)
     for r in results:
         if r:
@@ -196,10 +196,15 @@ async def run(auth, start_day: str, phase: str = "base",
     if weekly_tl > tl_max * LOAD_RATIO_WARNING:
         warnings.append(f"TL {weekly_tl} 在 1.3-1.5 警戒区, 已放行但请确认")
 
-    # Validate workout total vs weekly target
+    # Validate workout total vs weekly target — retry if too far off
     picked_total = sum(w.get("tl", 0) for w in workout_picks.values())
     if picked_total > 0 and abs(picked_total - weekly_tl) / weekly_tl > 0.20:
-        warnings.append(f"匹配总 TL({picked_total})与目标({weekly_tl})偏差 > 20%")
+        return {
+            "status": "retry",
+            "reason": f"匹配总 TL({picked_total})与目标({weekly_tl})偏差 > 20%, 请调整 weekly_tl 后重试",
+            "actual_total": picked_total,
+            "target": weekly_tl,
+        }
 
     # Schedule
     from coros_api import schedule_workout

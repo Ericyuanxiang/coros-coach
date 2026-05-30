@@ -363,8 +363,16 @@ async def run(auth, start_day: str, phase: str = "base",
                 "date": day["date"], "type": day["type"],
                 "title": w["title"], "tl": w["tl"],
             })
-        except Exception as e:
-            warnings.append(f"{day['date']} 排程失败: {e}")
+        except Exception:
+            await asyncio.sleep(1)  # retry once after delay
+            try:
+                await schedule_workout(auth, w["id"], day["date"], 1)
+                scheduled.append({
+                    "date": day["date"], "type": day["type"],
+                    "title": w["title"], "tl": w["tl"],
+                })
+            except Exception as e:
+                warnings.append(f"{day['date']} 排程失败: {e}")
 
     # ── Projection ──
     projection = None

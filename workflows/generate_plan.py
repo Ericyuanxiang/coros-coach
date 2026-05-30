@@ -62,6 +62,10 @@ async def run(auth, start_day: str, phase: str = "base",
     current_tired_rate = latest.get("tired_rate", 0)
     current_fatigue_state = latest.get("tired_rate_state_new", 2)
 
+    # Historical ATI to distinguish "always low" vs "just dropped"
+    ati_7d_ago = daily_sorted[min(6, len(daily_sorted)-1)].get("ati", 0) if len(daily_sorted) > 6 else None
+    ati_14d_ago = daily_sorted[min(13, len(daily_sorted)-1)].get("ati", 0) if len(daily_sorted) > 13 else None
+
     # Step 2: Coros TL recommendation
     week_list = sorted(analysis.get("week_list", []),
                        key=lambda w: w.get("firstDayOfWeek", 0), reverse=True)
@@ -104,7 +108,9 @@ async def run(auth, start_day: str, phase: str = "base",
                     "type": "int",
                     "coros_recommends": f"{tl_min}-{tl_max}",
                     "hint": f"疲劳度={current_fatigue_state} (1=Fresh→偏上限, 2=Normal→中位, 3=Overtrained→下限), "
-                           f"负荷比={current_ratio}",
+                           f"负荷比={current_ratio}, "
+                           f"ATI趋势: 7天前={ati_7d_ago}, 14天前={ati_14d_ago}, 现在={current_ati} "
+                           f"({'下降中→保守' if ati_7d_ago and current_ati < ati_7d_ago * 0.7 else '稳定/上升→可推进'})",
                 },
                 "daily_plan": {
                     "type": "list[7 days]",
@@ -121,7 +127,8 @@ async def run(auth, start_day: str, phase: str = "base",
             "context": {
                 "state": {"load_ratio": current_ratio, "ati": current_ati,
                           "cti": current_cti_val, "tired_rate": current_tired_rate,
-                          "fatigue_state": current_fatigue_state},
+                          "fatigue_state": current_fatigue_state,
+                          "ati_7d_ago": ati_7d_ago, "ati_14d_ago": ati_14d_ago},
                 "catalog": catalog_summary,
                 "rules": RULES,
             },

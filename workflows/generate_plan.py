@@ -156,6 +156,12 @@ async def run(auth, start_day: str, phase: str = "base",
                           "hrv_deviation": hrv_deviation},
                 "catalog": catalog_summary,
                 "rules": RULES,
+                "bounds": PHASE_BOUNDS,
+                "type_keywords": {
+                    "low": ("恢复", "基础训练", "MAF", "轻松"),
+                    "high": ("间歇", "VO2max", "节奏", "金字塔", "速度"),
+                    "endurance": ("LSD", "长距离", "耐力"),
+                },
             },
         }
 

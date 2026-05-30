@@ -14,13 +14,13 @@ LOAD_RATIO_DANGER = 1.5
 LOAD_RATIO_WARNING = 1.3
 
 RULES = [
-    "硬日(quality/long)后一天必须是 easy/recovery/rest",
-    "连续硬日不超过 2 天",
-    "至少 1 天完全休息 (周日永远休息)",
-    "长距离前后天必须是 easy 或 rest",
-    "周一=恢复或休息 (周末长距离后)",
-    "周五=轻松或休息 (为周六长距离蓄力)",
-    "周 TL 在 coros_recommendation 范围内, 超 1.5 倍硬拒绝",
+    "硬日(quality/long)后一天必须是 easy/recovery/rest  [代码强制]",
+    "连续硬日不超过 2 天  [代码强制]",
+    "至少 1 天完全休息, 周日永远休息  [代码强制]",
+    "长距离前后天必须是 easy 或 rest  [代码强制]",
+    "周一=恢复或休息  [建议, 代码提醒]",
+    "周五=轻松或休息  [建议, 代码提醒]",
+    "周 TL 在 coros_recommendation 范围内, 超 1.5 倍硬拒绝  [代码强制]",
 ]
 
 
@@ -147,20 +147,37 @@ async def run(auth, start_day: str, phase: str = "base",
         if tp in ("quality", "long"):
             hard_days += 1
             consecutive_hard += 1
-            # Rule: flanked by easy/recovery/rest
+            # Rule 1: hard day must be preceded by easy/recovery/rest
             if i > 0 and daily_plan[i - 1].get("type") not in ("easy", "recovery", "rest"):
-                warnings.append(f"{day.get('date')}: 硬日前一天应是轻松/恢复/休息")
+                return {"status": "rejected",
+                        "reason": f"{day.get('date')}: 硬日前一天必须是 easy/recovery/rest"}
+            # Rule 4: long run must be flanked by easy/rest (both sides)
+            if tp == "long":
+                if i > 0 and daily_plan[i - 1].get("type") not in ("easy", "rest"):
+                    return {"status": "rejected",
+                            "reason": f"{day.get('date')}: 长距离前一天必须是 easy/rest"}
+                if i < 6 and daily_plan[i + 1].get("type") not in ("easy", "rest"):
+                    return {"status": "rejected",
+                            "reason": f"{day.get('date')}: 长距离后一天必须是 easy/rest"}
         else:
             consecutive_hard = 0
 
+        # Rule 2: max 2 consecutive hard days
         if consecutive_hard > 2:
             return {"status": "rejected",
                     "reason": f"连续硬日超过 2 天 ({day.get('date')})"}
 
+    # Rule 3: at least 1 rest day, Sunday always rest
     if rest_count < 1:
-        warnings.append("一周没有休息日")
+        return {"status": "rejected", "reason": "一周至少需要 1 天休息"}
     if daily_plan[6].get("type") != "rest":
-        warnings.append("周日不是休息日")
+        return {"status": "rejected", "reason": "周日必须是休息日"}
+
+    # Advisory (best practice, not safety)
+    if daily_plan[0].get("type") not in ("recovery", "rest"):
+        warnings.append("周一建议恢复或休息")
+    if daily_plan[4].get("type") not in ("easy", "rest"):
+        warnings.append("周五建议轻松或休息")
 
     # ── Import selected workouts ──
     imported: dict[str, dict] = {}

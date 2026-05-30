@@ -39,6 +39,7 @@ PHASE_TEMPLATES = {
 LOAD_RATIO_DANGER = 1.5
 LOAD_RATIO_WARNING = 1.3
 MAX_CONSECUTIVE_HARD = 2
+EASY_FALLBACK_PCT = 15  # % when a day is forced from hard to easy
 
 
 async def run(auth, start_day: str, phase: str = "base",
@@ -63,7 +64,8 @@ async def run(auth, start_day: str, phase: str = "base",
     analysis = await fetch_training_analysis(auth, today, today)
     daily = analysis.get("daily_records", [])
 
-    latest = daily[0] if daily else {}
+    daily_sorted = sorted(daily, key=lambda r: r.get("date", ""), reverse=True)
+    latest = daily_sorted[0] if daily_sorted else {}
     current_ratio = latest.get("training_load_ratio", 0.8)
     current_ati = latest.get("ati", 0)
     current_cti_val = latest.get("cti", 50)
@@ -105,7 +107,7 @@ async def run(auth, start_day: str, phase: str = "base",
             consecutive_hard = 0
         if consecutive_hard > MAX_CONSECUTIVE_HARD:
             day_type = "easy"
-            tl_pct = 15
+            tl_pct = EASY_FALLBACK_PCT
             consecutive_hard = 0
 
         daily_plan.append({
@@ -230,8 +232,10 @@ async def run(auth, start_day: str, phase: str = "base",
         end_day = (start_date + timedelta(days=6)).strftime("%Y%m%d")
         sched = await fetch_schedule(auth, start_day, end_day)
         weeks = sched.get("weekStages", [])
-        if weeks:
-            ws = weeks[0].get("trainSum", {})
+        target_week = int(start_day)
+        week_data = next((w for w in weeks if w.get("firstDayInWeek") == target_week), None)
+        if week_data:
+            ws = week_data.get("trainSum", {})
             projection = {
                 "long_term_load": ws.get("actualCti"),
                 "short_term_load": ws.get("actualAti"),

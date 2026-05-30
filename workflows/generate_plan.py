@@ -181,13 +181,13 @@ async def run(auth, start_day: str, phase: str = "base",
             return {"status": "rejected",
                     "reason": f"连续硬日超过 2 天 ({day.get('date')})"}
 
-    # Rule 3: at least 1 rest day, Sunday always rest, within phase bounds
+    # Rule 3: at least 1 rest day, Sunday always rest
+    if rest_count < 1:
+        return {"status": "rejected", "reason": "一周至少需要 1 天休息"}
     bounds = PHASE_BOUNDS.get(phase, PHASE_BOUNDS["base"])
     rest_lo, rest_hi = bounds["rest_days"]
-    if rest_count < rest_lo:
-        return {"status": "rejected", "reason": f"休息日不足 ({rest_count}天, 需要{rest_lo}-{rest_hi}天)"}
-    if rest_count > rest_hi:
-        warnings.append(f"休息日偏多 ({rest_count}天, 建议{rest_lo}-{rest_hi}天)")
+    if rest_count < rest_lo or rest_count > rest_hi:
+        warnings.append(f"休息日 {rest_count} 天 (建议 {rest_lo}-{rest_hi} 天)")
     if daily_plan[6].get("type") != "rest":
         return {"status": "rejected", "reason": "周日必须是休息日"}
 

@@ -14,11 +14,11 @@ LOAD_RATIO_DANGER = 1.5
 LOAD_RATIO_WARNING = 1.3
 
 PHASE_BOUNDS = {
-    # quality + long = hard, recovery + easy + long(Z2) = aerobic
-    "base":  {"quality": (0, 20),  "long": (20, 35), "recovery": (5, 15), "easy_min": 10, "rest_days": (1, 2)},
-    "build": {"quality": (20, 30), "long": (25, 35), "recovery": (5, 15), "easy_min": 10, "rest_days": (1, 2)},
-    "peak":  {"quality": (20, 30), "long": (30, 45), "recovery": (5, 15), "easy_min": 10, "rest_days": (1, 2)},
-    "taper": {"quality": (15, 25), "long": (15, 30), "recovery": (5, 15), "easy_min": 10, "rest_days": (2, 3)},
+    # recovery < easy < quality ≈ long. Percentage of weekly TL.
+    "base":  {"quality": (0, 20),  "long": (20, 35), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
+    "build": {"quality": (20, 30), "long": (25, 35), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
+    "peak":  {"quality": (20, 30), "long": (30, 45), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
+    "taper": {"quality": (15, 25), "long": (15, 30), "recovery": (5, 12), "easy": (10, 25), "rest_days": (2, 3)},
 }
 
 RULES = [
@@ -241,9 +241,9 @@ async def run(auth, start_day: str, phase: str = "base",
             if pct > hi:
                 warnings.append(f"{day['date']}: recovery {pct}% 偏重, 建议 ≤{hi}%")
         elif tp == "easy":
-            lo = bounds.get("easy_min", 10)
-            if pct < lo:
-                warnings.append(f"{day['date']}: easy {pct}% 偏低, 建议 ≥{lo}%")
+            lo, hi = bounds.get("easy", (10, 20))
+            if pct < lo or pct > hi:
+                warnings.append(f"{day['date']}: easy {pct}% 超出范围 {lo}-{hi}%")
 
     # Advisory (best practice, not safety)
     if daily_plan[0].get("type") not in ("recovery", "rest"):

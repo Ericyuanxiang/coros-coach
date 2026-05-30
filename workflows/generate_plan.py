@@ -240,6 +240,14 @@ async def run(auth, start_day: str, phase: str = "base",
             if pct < lo:
                 warnings.append(f"{day['date']}: easy {pct}% 偏低, 建议 ≥{lo}%")
 
+    # ── Long run must be substantially different from easy days ──
+    easy_max = max((w["tl"] for d, w in imported.items()
+                    if any(day.get("type") == "easy" for day in daily_plan if day["date"] == d)), default=0)
+    long_tl = next((w["tl"] for d, w in imported.items()
+                    if any(day.get("type") == "long" for day in daily_plan if day["date"] == d)), 0)
+    if long_tl and easy_max and long_tl <= easy_max:
+        warnings.append(f"长距离日 TL({long_tl}) <= 轻松日最大 TL({easy_max}), 不应相同")
+
     # Advisory (best practice, not safety)
     if daily_plan[0].get("type") not in ("recovery", "rest"):
         warnings.append("周一建议恢复或休息")

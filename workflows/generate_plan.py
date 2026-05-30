@@ -270,9 +270,21 @@ async def run(auth, start_day: str, phase: str = "base",
     if not imported:
         return {"status": "rejected", "reason": "没有成功导入任何课程"}
 
+    # ── Validate per-workout TL ──
+    day_overshoots = []
+    for day in daily_plan:
+        w = imported.get(day["date"])
+        if not w or day["tl_pct"] <= 0:
+            continue
+        target = int(weekly_tl * day["tl_pct"] / 100)
+        if abs(w["tl"] - target) / target > 0.30:
+            day_overshoots.append(
+                f"{day['date']} ({day['type']}): 目标{target}TL, 实际{w['tl']}TL"
+            )
+
     # ── Validate total TL ──
     picked_total = sum(w["tl"] for w in imported.values())
-    if abs(picked_total - weekly_tl) / weekly_tl > 0.20:
+    if abs(picked_total - weekly_tl) / weekly_tl > 0.20 or len(day_overshoots) >= 2:
         return {
             "status": "retry",
             "reason": f"匹配总 TL({picked_total})与目标({weekly_tl})偏差 > 20%",

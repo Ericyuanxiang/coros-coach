@@ -44,7 +44,7 @@ def _build_daily_plan(phase: str) -> list[dict]:
         plan[2] = ("quality", quality_pct)  # Wednesday
     else:
         plan[1] = ("quality", quality_pct)  # Tuesday
-        plan[2] = ("quality", quality_pct)  # Wednesday
+        plan[3] = ("quality", quality_pct)  # Thursday (隔开，不连排)
 
     # Easy fills the rest
     remaining = 1.0 - sum(f for _, f in plan.values())

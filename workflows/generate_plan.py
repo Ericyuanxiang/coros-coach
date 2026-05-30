@@ -15,7 +15,7 @@ LOAD_RATIO_WARNING = 1.3
 
 PHASE_BOUNDS = {
     # recovery < easy < quality ≈ long. Percentage of weekly TL.
-    "base":  {"quality": (0, 20),  "long": (20, 35), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
+    "base":  {"quality": (0, 15),  "long": (20, 35), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
     "build": {"quality": (20, 30), "long": (25, 35), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
     "peak":  {"quality": (20, 30), "long": (30, 45), "recovery": (5, 12), "easy": (10, 20), "rest_days": (1, 2)},
     "taper": {"quality": (15, 25), "long": (15, 30), "recovery": (5, 12), "easy": (10, 25), "rest_days": (2, 3)},

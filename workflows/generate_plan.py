@@ -59,9 +59,9 @@ async def run(auth, start_day: str, phase: str = "base",
                        key=lambda w: w.get("firstDayOfWeek", 0), reverse=True)
     tl_min, tl_max = 350, 500
     for w in week_list:
-        if w.get("recomend_tl_min") and w.get("recomend_tl_max"):
-            tl_min = int(w["recomend_tl_min"])
-            tl_max = int(w["recomend_tl_max"])
+        if w.get("recomendTlMin") and w.get("recomendTlMax"):
+            tl_min = int(w["recomendTlMin"])
+            tl_max = int(w["recomendTlMax"])
             break
 
     if current_ratio >= LOAD_RATIO_DANGER:

@@ -14,7 +14,7 @@ LOAD_RATIO_DANGER = 1.5
 LOAD_RATIO_WARNING = 1.3
 
 PHASE_BOUNDS = {
-    "base":  {"quality": (15, 30), "long": (20, 35), "recovery": (5, 15), "rest_days": (1, 3)},
+    "base":  {"quality": (0, 20),  "long": (20, 35), "recovery": (5, 15), "rest_days": (1, 3)},
     "build": {"quality": (20, 35), "long": (25, 40), "recovery": (5, 15), "rest_days": (1, 2)},
     "peak":  {"quality": (20, 35), "long": (30, 45), "recovery": (5, 15), "rest_days": (1, 3)},
     "taper": {"quality": (15, 25), "long": (15, 30), "recovery": (5, 15), "rest_days": (2, 4)},

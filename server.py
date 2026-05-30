@@ -97,19 +97,22 @@ async def generate_plan(start_day: str = "",
     if phase not in ("base", "build", "peak", "taper"):
         return {"error": f"phase 必须是 base/build/peak/taper 之一, 不是 '{phase}'"}
     if not start_day:
-        return {"error": "请提供 start_day, 例如 '2026-06-01' (下周一)"}
+        from datetime import date, timedelta
+        today = date.today()
+        days = (7 - today.weekday()) % 7 or 7
+        start_day = (today + timedelta(days=days)).strftime("%Y%m%d")
     # Normalize date format: accept "2026-06-01", "2026/06/01", etc.
     start_day = start_day.replace("-", "").replace("/", "").replace(".", "")
     if len(start_day) != 8 or not start_day.isdigit():
         return {"error": f"日期格式需要 YYYYMMDD, 例如 '20260601'. 收到: '{start_day}'"}
-    # Validate near future (not 2025)
+    # Silently fix past dates (AI doesn't know it's 2026)
     from datetime import date, timedelta
     try:
         dt = date(int(start_day[:4]), int(start_day[4:6]), int(start_day[6:8]))
         today = date.today()
-        next_mon = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
         if dt < today - timedelta(days=1):
-            return {"error": f"不能是过去的日期. 请用 {next_mon.strftime('%Y-%m-%d')} 左右"}
+            days = (7 - today.weekday()) % 7 or 7
+            start_day = (today + timedelta(days=days)).strftime("%Y%m%d")
     except ValueError:
         return {"error": f"日期不存在: '{start_day}'"}
     auth = await _get_auth()

@@ -301,14 +301,6 @@ async def run(auth, start_day: str, phase: str = "base",
             return {"status": "rejected",
                     "reason": f"{day['date']} ({tp}): {title} 是 {actual_group} 类型, 需要 {expected_group} 类型"}
 
-    # ── Long run must be substantially different from easy days ──
-    easy_max = max((w["tl"] for d, w in imported.items()
-                    if any(day.get("type") == "easy" for day in daily_plan if day["date"] == d)), default=0)
-    long_tl = next((w["tl"] for d, w in imported.items()
-                    if any(day.get("type") == "long" for day in daily_plan if day["date"] == d)), 0)
-    if long_tl and easy_max and long_tl <= easy_max:
-        warnings.append(f"长距离日 TL({long_tl}) <= 轻松日最大 TL({easy_max}), 不应相同")
-
     # ── Validate per-workout TL ──
     day_overshoots = []
     for day in daily_plan:

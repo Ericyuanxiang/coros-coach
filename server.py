@@ -127,6 +127,25 @@ async def generate_plan(start_day: str, phase: str = "base",
 
 
 
+# ---------------------------------------------------------------------------
+# create_workout — AI builds custom when catalog has no match
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def create_workout(name: str, duration_minutes: int = 60,
+                          hr_low: int = 2, hr_high: int = 3) -> dict:
+    """Create a custom running workout. Use when generate_plan retry fails
+    after multiple catalog attempts. Pass returned workout_id in Phase 2."""
+    auth = await _get_auth()
+    if not auth: return {"error": "Not authenticated."}
+    try:
+        steps = [{"name": name, "duration_minutes": duration_minutes, "hr_low": hr_low, "hr_high": hr_high}]
+        wid = await coros_api.create_run_workout(auth, name, steps)
+        return {"created": True, "workout_id": wid, "name": name}
+    except Exception as exc:
+        return _tool_error(exc)
+
+
 def main():
     mcp.run()
 

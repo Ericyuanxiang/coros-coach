@@ -302,30 +302,7 @@ async def run(auth, start_day: str, phase: str = "base",
                     "duration_s": est.get("planDuration", 3600),
                 }
             else:
-                # Auto-create a basic workout when AI provides neither catalog nor custom
-                from coros_api import create_run_workout
-                day = next((d for d in daily_plan if d["date"] == day_date), {})
-                tp = day.get("type", "easy")
-                target_tl = int((weekly_tl or 400) * day.get("tl_pct", 15) / 100)
-                dur = {"recovery": 30, "easy": 45, "quality": 50, "long": 60}.get(tp, 45)
-                hr_lo = {"recovery": 1, "easy": 2, "quality": 3, "long": 2}.get(tp, 2)
-                hr_hi = {"recovery": 2, "easy": 3, "quality": 5, "long": 3}.get(tp, 3)
-                name = f"{dur}分钟{tp}跑 (自建)"
-                steps = [{"name": name, "duration_minutes": dur, "hr_low": hr_lo, "hr_high": hr_hi}]
-                try:
-                    custom_wid = await create_run_workout(auth, name, steps)
-                    raw = await _fetch_raw_workout(auth, custom_wid)
-                    est = await fetch_program_calculate(auth, raw)
-                    imported[day_date] = {
-                        "id": custom_wid,
-                        "title": name,
-                        "tl": est.get("planTrainingLoad", target_tl),
-                        "duration_s": est.get("planDuration", dur * 60),
-                    }
-                    warnings.append(f"{day_date}: 无匹配课程, 已自建 {name}")
-                except Exception as e:
-                    warnings.append(f"{day_date} 自建失败: {e}")
-                    continue
+                continue
         except Exception as e:
             warnings.append(f"{day_date} 导入失败: {e}")
 

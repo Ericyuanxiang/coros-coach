@@ -135,7 +135,7 @@ async def run(auth, start_day: str, phase: str = "base",
                 "cti": current_cti_val, "tired_rate": current_tired_rate,
                 "fatigue_state": current_fatigue_state,
             },
-            "tl_range": {"min": tl_min, "max": tl_max},
+            "coros_recommendation": {"tl_min": tl_min, "tl_max": tl_max},
             "daily_plan": daily_plan,
             "catalog": catalog_summary,
             "pending": {

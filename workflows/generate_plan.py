@@ -286,7 +286,7 @@ async def run(auth, start_day: str, phase: str = "base",
     picked_total = sum(w["tl"] for w in imported.values())
     if abs(picked_total - weekly_tl) / weekly_tl > 0.20 or len(day_overshoots) >= 2:
         retry_count = ai_decision.get("_retry_count", 0) + 1
-        hint = ("从 catalog 换课重试" if retry_count < 2 else
+        hint = ("从 catalog 换课重试" if retry_count < 3 else
                 f"已重试 {retry_count} 次, catalog 无合适课, 用 create_workout 自建")
         reason_parts = [f"总 TL({picked_total})vs 目标({weekly_tl})"]
         if day_overshoots:

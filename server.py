@@ -83,26 +83,21 @@ async def check_coros_auth() -> dict:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def generate_plan(start_day: str, phase: str = "base",
+async def generate_plan(start_day: str = "",
+                         phase: str = "base",
                          ai_decision: dict | None = None) -> dict:
-    """Generate a weekly training plan — two-phase AI-embedded workflow.
+    """Generate a weekly training plan. Two-phase: Phase 1 returns framework,
+    Phase 2 (with ai_decision) executes the plan.
 
-    Phase 1 (ai_decision=None): returns state + catalog + rules for AI to
-    fill in weekly_tl, daily_plan, and workout_picks.
-
-    Phase 2 (ai_decision provided): validates AI's plan, imports selected
-    courses, schedules them, and shows weekly projection.
-
-    Parameters
-    ----------
-    start_day : str — Monday in YYYYMMDD format (e.g. "20260601")
-    phase : str — "base" | "build" | "peak" | "taper"
-    ai_decision : dict, optional
-        {weekly_tl: int, daily_plan: list[7], workout_picks: dict}
-
-    Returns Phase 1 framework or Phase 2 result.
+    start_day: next Monday's date, e.g. "20260601" or "2026-06-01"
+    phase: ONLY "base", "build", "peak", or "taper". Default "base".
+    ai_decision: omit in Phase 1. Required in Phase 2.
     """
     from workflows.generate_plan import run
+    if phase not in ("base", "build", "peak", "taper"):
+        return {"error": f"phase 必须是 base/build/peak/taper 之一, 不是 '{phase}'"}
+    if not start_day:
+        return {"error": "请提供 start_day, 例如 '2026-06-01' (下周一)"}
     # Normalize date format: accept "2026-06-01", "2026/06/01", etc.
     start_day = start_day.replace("-", "").replace("/", "").replace(".", "")
     if len(start_day) != 8 or not start_day.isdigit():

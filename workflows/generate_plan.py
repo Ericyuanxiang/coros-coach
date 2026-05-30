@@ -125,22 +125,30 @@ async def run(auth, start_day: str, phase: str = "base",
         for w in catalog
     ]
 
-    # Return framework if Phase 1 only
+    # Return framework if Phase 1 only — fill first, context second
     if ai_decision is None:
         return {
             "status": "pending",
             "week_start": start_day, "phase": phase,
-            "current_state": {
-                "load_ratio": current_ratio, "ati": current_ati,
-                "cti": current_cti_val, "tired_rate": current_tired_rate,
-                "fatigue_state": current_fatigue_state,
+            "fill": {
+                "weekly_tl": {
+                    "type": "int",
+                    "coros_recommends": f"{tl_min}-{tl_max}",
+                    "hint": f"疲劳度={current_fatigue_state}(1=Fresh→偏上限, 2=Normal→中位, 3=Overtrained→下限), "
+                           f"负荷比={current_ratio}({'>1.5危险' if current_ratio>=LOAD_RATIO_DANGER else '<1.5安全'})",
+                },
+                "workout_picks": {
+                    "type": "dict[date, linked_id]",
+                    "from": "catalog below",
+                    "hint": "按 daily_plan 的 type 从 catalog 选课, 优先标题含关键词: 恢复→恢复, 轻松→基础/MAF, 强度→间歇/VO2max/节奏, 长→LSD/长距离",
+                },
             },
-            "coros_recommendation": {"tl_min": tl_min, "tl_max": tl_max},
-            "daily_plan": daily_plan,
-            "catalog": catalog_summary,
-            "pending": {
-                "weekly_tl": None,
-                "workout_picks": None,
+            "context": {
+                "state": {"load_ratio": current_ratio, "ati": current_ati,
+                          "cti": current_cti_val, "tired_rate": current_tired_rate,
+                          "fatigue_state": current_fatigue_state},
+                "daily_plan": daily_plan,
+                "catalog": catalog_summary,
             },
         }
 

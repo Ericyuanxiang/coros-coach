@@ -23,19 +23,17 @@ def _build_daily_plan(phase: str) -> list[dict]:
       long_pct:       Saturday long run share
     """
     phase_cfg = {
-        # rest_extra: additional rest days beyond Sunday (dow=6)
-        "base":  {"rest_extra": [4],    "quality": 1, "long_pct": 0.30, "quality_pct": 0.20, "recovery_pct": 0.15},
-        "build": {"rest_extra": [4],    "quality": 2, "long_pct": 0.30, "quality_pct": 0.25, "recovery_pct": 0.15},
-        "peak":  {"rest_extra": [0, 4], "quality": 2, "long_pct": 0.40, "quality_pct": 0.20, "recovery_pct": 0.10},
-        "taper": {"rest_extra": [0, 4], "quality": 1, "long_pct": 0.25, "quality_pct": 0.15, "recovery_pct": 0.10},
+        # Only Sunday (dow=6) is hardcoded rest. AI decides all other rest days.
+        "base":  {"quality": 1, "long_pct": 0.30, "quality_pct": 0.20, "recovery_pct": 0.15},
+        "build": {"quality": 2, "long_pct": 0.30, "quality_pct": 0.25, "recovery_pct": 0.15},
+        "peak":  {"quality": 2, "long_pct": 0.40, "quality_pct": 0.20, "recovery_pct": 0.10},
+        "taper": {"quality": 1, "long_pct": 0.25, "quality_pct": 0.15, "recovery_pct": 0.10},
     }
     cfg = phase_cfg.get(phase, phase_cfg["base"])
     plan = {}
 
-    # Sunday always rest. Phase config controls extra rest days
+    # Sunday always rest. AI decides all other rest days.
     plan[6] = ("rest", 0.0)
-    for d in cfg["rest_extra"]:
-        plan[d] = ("rest", 0.0)
 
     # Saturday long
     plan[5] = ("long", cfg["long_pct"])
@@ -51,13 +49,10 @@ def _build_daily_plan(phase: str) -> list[dict]:
     if 0 not in plan:
         plan[0] = ("recovery", cfg["recovery_pct"])
 
-    # Remaining days = easy
-    remaining = 1.0 - sum(f for _, f in plan.values())
-    easy_days = [d for d in range(7) if d not in plan]
-    if easy_days:
-        each = remaining / len(easy_days)
-        for d in easy_days:
-            plan[d] = ("easy", round(each, 2))
+    # Fill remaining days as easy at a reasonable floor (not equal split)
+    for d in range(7):
+        if d not in plan:
+            plan[d] = ("easy", 0.10)  # 10% floor — AI can adjust
 
     return plan
 

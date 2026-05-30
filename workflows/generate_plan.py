@@ -240,6 +240,22 @@ async def run(auth, start_day: str, phase: str = "base",
             if pct < lo:
                 warnings.append(f"{day['date']}: easy {pct}% 偏低, 建议 ≥{lo}%")
 
+    # ── Type consistency: course title should match day type ──
+    TYPE_SIGNALS = {
+        "recovery": ("恢复", "基础训练", "轻松"),
+        "easy": ("基础训练", "MAF", "轻松"),
+        "quality": ("间歇", "VO2max", "节奏", "金字塔", "速度"),
+        "long": ("LSD", "长距离", "耐力"),
+    }
+    for day in daily_plan:
+        tp = day.get("type", "")
+        w = imported.get(day["date"])
+        if not w or tp not in TYPE_SIGNALS:
+            continue
+        title = w.get("title", "")
+        if not any(k in title for k in TYPE_SIGNALS[tp]):
+            warnings.append(f"{day['date']} ({tp}): {title} 不是典型的 {tp} 课程")
+
     # ── Long run must be substantially different from easy days ──
     easy_max = max((w["tl"] for d, w in imported.items()
                     if any(day.get("type") == "easy" for day in daily_plan if day["date"] == d)), default=0)

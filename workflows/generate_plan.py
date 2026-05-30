@@ -70,15 +70,15 @@ async def run(auth, start_day: str, phase: str = "base",
     current_tired_rate = latest.get("tired_rate", 0)
     current_fatigue_state = latest.get("tired_rate_state_new", 2)
 
-    # Step 2: Coros TL recommendation
-    week_list = analysis.get("week_list", [])
+    # Step 2: Coros TL recommendation — latest week with values
+    week_list = sorted(analysis.get("week_list", []),
+                       key=lambda w: w.get("firstDayOfWeek", 0), reverse=True)
     tl_min, tl_max = 350, 500
-    if week_list:
-        w = week_list[0]
-        if w.get("recomend_tl_min") is not None:
-            tl_min = w["recomend_tl_min"]
-        if w.get("recomend_tl_max") is not None:
-            tl_max = w["recomend_tl_max"]
+    for w in week_list:
+        if w.get("recomend_tl_min") and w.get("recomend_tl_max"):
+            tl_min = int(w["recomend_tl_min"])
+            tl_max = int(w["recomend_tl_max"])
+            break
 
     # Step 3: Safety caps (only danger zone — 1.5 is hard limit)
     if current_ratio >= LOAD_RATIO_DANGER:

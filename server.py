@@ -1629,6 +1629,43 @@ async def manage_plan(
 # Entry point
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Tool: generate_plan — two-phase AI-embedded weekly plan builder
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def generate_plan(start_day: str, phase: str = "base",
+                         ai_decision: dict | None = None) -> dict:
+    """Generate a weekly training plan — two-phase AI-embedded workflow.
+
+    Phase 1 (ai_decision=None): returns state + catalog + rules for AI to
+    fill in weekly_tl, daily_plan, and workout_picks.
+
+    Phase 2 (ai_decision provided): validates AI's plan against safety
+    rules, imports selected courses, schedules them, and shows projection.
+
+    Parameters
+    ----------
+    start_day : str — Monday date in YYYYMMDD (e.g., "20260601")
+    phase : str — "base" | "build" | "peak" | "taper"
+    ai_decision : dict, optional — AI's filled decisions for Phase 2
+        {weekly_tl: int, daily_plan: list[7], workout_picks: dict}
+
+    Returns
+    -------
+    Phase 1: {status: "pending", fill: {...}, context: {...}}
+    Phase 2: {status: "done"|"retry"|"rejected", plan: {...}}
+    """
+    from workflows.generate_plan import run
+    auth = await _get_auth()
+    if auth is None:
+        return {"error": "Not authenticated. Set COROS_EMAIL and COROS_PASSWORD in .env or call authenticate_coros."}
+    try:
+        return await run(auth, start_day, phase, ai_decision)
+    except Exception as exc:
+        return _tool_error(exc)
+
+
 def main():
     mcp.run()
 

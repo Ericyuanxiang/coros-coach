@@ -51,7 +51,8 @@ async def run(auth, start_day: str, phase: str = "base",
 
     # Step 1: Fetch current state
     today = datetime.now().strftime("%Y%m%d")
-    analysis = await fetch_training_analysis(auth, today, today)
+    two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime("%Y%m%d")
+    analysis = await fetch_training_analysis(auth, two_weeks_ago, today)
     daily = analysis.get("daily_records", [])
     daily_sorted = sorted(daily, key=lambda r: r.get("date", ""), reverse=True)
     latest = daily_sorted[0] if daily_sorted else {}

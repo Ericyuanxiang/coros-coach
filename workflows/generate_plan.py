@@ -192,9 +192,11 @@ async def run(auth, start_day: str, phase: str = "base",
     if abs(picked_total - weekly_tl) / weekly_tl > 0.20:
         return {
             "status": "retry",
-            "reason": f"匹配总 TL({picked_total})与目标({weekly_tl})偏差 > 20%, 请调整后重试",
-            "actual_total": picked_total,
+            "reason": f"匹配总 TL({picked_total})与目标({weekly_tl})偏差 > 20%, 请换课重试",
             "target": weekly_tl,
+            "actual_total": picked_total,
+            "per_workout_tl": {d: {"title": w["title"], "tl": w["tl"]}
+                               for d, w in imported.items()},
             "warnings": warnings,
         }
 

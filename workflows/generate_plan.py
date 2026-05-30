@@ -54,11 +54,6 @@ def _build_daily_plan(phase: str) -> list[dict]:
         for d in easy_days:
             plan[d] = ("easy", round(each, 2))
 
-    # Normalize to 100% (some phase/quality combos overshoot)
-    total = sum(f for _, f in plan.values())
-    if total != 1.0:
-        for d in plan:
-            plan[d] = (plan[d][0], round(plan[d][1] / total, 2))
     return plan
 
 LOAD_RATIO_DANGER = 1.5

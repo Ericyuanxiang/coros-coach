@@ -23,17 +23,18 @@ def _build_daily_plan(phase: str) -> list[dict]:
       long_pct:       Saturday long run share
     """
     phase_cfg = {
-        # rest_extra: additional rest days beyond Fri+Sun
-        "base":  {"rest_extra": [],     "quality": 1, "long_pct": 0.30, "quality_pct": 0.20, "recovery_pct": 0.15},
-        "build": {"rest_extra": [],     "quality": 2, "long_pct": 0.30, "quality_pct": 0.25, "recovery_pct": 0.15},
-        "peak":  {"rest_extra": [0],    "quality": 2, "long_pct": 0.40, "quality_pct": 0.20, "recovery_pct": 0.10},
-        "taper": {"rest_extra": [0],    "quality": 1, "long_pct": 0.25, "quality_pct": 0.15, "recovery_pct": 0.10},
+        # rest_extra: additional rest days beyond Sunday (dow=6)
+        "base":  {"rest_extra": [4],    "quality": 1, "long_pct": 0.30, "quality_pct": 0.20, "recovery_pct": 0.15},
+        "build": {"rest_extra": [4],    "quality": 2, "long_pct": 0.30, "quality_pct": 0.25, "recovery_pct": 0.15},
+        "peak":  {"rest_extra": [0, 4], "quality": 2, "long_pct": 0.40, "quality_pct": 0.20, "recovery_pct": 0.10},
+        "taper": {"rest_extra": [0, 4], "quality": 1, "long_pct": 0.25, "quality_pct": 0.15, "recovery_pct": 0.10},
     }
     cfg = phase_cfg.get(phase, phase_cfg["base"])
     plan = {}
 
-    # Always rest
-    for d in [4, 6] + cfg["rest_extra"]:
+    # Sunday always rest. Phase config controls extra rest days
+    plan[6] = ("rest", 0.0)
+    for d in cfg["rest_extra"]:
         plan[d] = ("rest", 0.0)
 
     # Saturday long
